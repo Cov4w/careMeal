@@ -3,8 +3,7 @@
 Thumbs.db
 careMeal_dev
 app.py
-package.json
-package-lock.json
+
 # Python
 __pycache__/
 *.py[cod]
