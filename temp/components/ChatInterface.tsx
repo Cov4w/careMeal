@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, ArrowLeft, Stethoscope, RefreshCcw, History, Trash2, X, MessageSquare, Camera } from 'lucide-react';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
-import { Message } from '../types';
+import { Message, MealItem } from '../types';
 import { fetchChatResponse, analyzeFoodImage } from '../services/api';
 
 interface ChatInterfaceProps {
@@ -11,6 +11,7 @@ interface ChatInterfaceProps {
   initialMessage?: string;
   userId: string;
   onNavigate?: (view: any) => void;
+  onSaveMeal: (time: 'breakfast' | 'lunch' | 'dinner', item: MealItem) => void;
 }
 
 const INITIAL_GREETING: Message = {
@@ -20,7 +21,7 @@ const INITIAL_GREETING: Message = {
   timestamp: new Date(),
 };
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, userId, onNavigate }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, userId, onNavigate, onSaveMeal }) => {
   useEffect(() => {
     console.log("🐛 ChatInterface mounted. Current UserID prop:", userId);
   }, [userId]);
@@ -126,7 +127,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, u
           text: response.reply,
           sender: 'ai',
           timestamp: new Date(),
-          sources: response.sources
+          sources: response.sources,
+          isAnalysis: true // Mark as analysis result
         };
 
         setMessages(prev => [...prev, aiMessage]);
@@ -217,6 +219,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, u
               message={msg}
               onDelete={() => deleteMessage(msg.id)}
               onNavigate={onNavigate}
+              onSaveMeal={onSaveMeal}
             />
           ))}
           {isLoading && (
