@@ -47,13 +47,33 @@ class LoginRequest(BaseModel):
 KB_ID = os.getenv("KB_ID")  # 환경 변수에서 로드
 MODEL_ARN = "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0"
 
+# AWS credentials 환경 변수에서 로드
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_DEFAULT_REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+
 # --- AWS 클라이언트 연결 (이 부분이 없어서 에러가 났던 겁니다!) ---
 # 1) Bedrock 연결
-bedrock_agent = boto3.client(service_name='bedrock-agent-runtime', region_name='us-east-1')
-bedrock_runtime = boto3.client(service_name='bedrock-runtime', region_name='us-east-1') # 이미지 분석용 추가
+bedrock_agent = boto3.client(
+    service_name='bedrock-agent-runtime',
+    region_name=AWS_DEFAULT_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+)
+bedrock_runtime = boto3.client(
+    service_name='bedrock-runtime',
+    region_name=AWS_DEFAULT_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+)
 
 # 2) DynamoDB 연결
-dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+dynamodb = boto3.resource(
+    'dynamodb',
+    region_name=AWS_DEFAULT_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+)
 
 # 3) 테이블 연결
 chat_table = dynamodb.Table('CareMeal-ChatLog') # 채팅 로그용 테이블

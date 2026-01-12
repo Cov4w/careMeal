@@ -1,4 +1,4 @@
-import { ChatRequest, ChatResponse } from '../types';
+import { ChatRequest, ChatResponse } from '@/types';
 
 // Helper to simulate delay
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));

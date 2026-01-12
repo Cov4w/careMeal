@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { ChatRequest, ChatResponse, SignUpRequest, LoginRequest, LoginResponse } from '../types';
+import { ChatRequest, ChatResponse, SignUpRequest, LoginRequest, LoginResponse } from '@/types';
 import { mockChatApi } from './mockApi';
 
 // Real Backend URL

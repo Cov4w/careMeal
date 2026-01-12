@@ -2,8 +2,8 @@
 import React, { useState } from 'react';
 import { Activity, ArrowRight, Lock, User, UserPlus, Sparkles, ChevronLeft, CheckCircle2, AlertCircle, Play } from 'lucide-react';
 import Diagnosis, { DiagnosisResult } from './Diagnosis';
-import { login, signUp } from '../services/api';
-import { SignUpRequest } from '../types';
+import { login, signUp } from '@/services/api';
+import { SignUpRequest } from '@/types';
 
 interface LoginProps {
   onLoginComplete: (data: DiagnosisResult) => void;

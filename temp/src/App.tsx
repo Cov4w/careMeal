@@ -1,13 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import Home from './components/Home';
-import ChatInterface from './components/ChatInterface';
-import MealRecord from './components/MealRecord';
-import CustomDiet from './components/CustomDiet';
-import MyPage from './components/MyPage';
-import BottomNav from './components/BottomNav';
-import Login from './components/Login';
-import { DiagnosisResult } from './components/Diagnosis';
+import Home from '@/components/Home';
+import ChatInterface from '@/components/ChatInterface';
+import MealRecord from '@/components/MealRecord';
+import CustomDiet from '@/components/CustomDiet';
+import MyPage from '@/components/MyPage';
+import BottomNav from '@/components/BottomNav';
+import Login from '@/components/Login';
+import { DiagnosisResult } from '@/components/Diagnosis';
 import { DailyMealPlan, MealItem } from './types';
 
 export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage';

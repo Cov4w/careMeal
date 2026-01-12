@@ -3,9 +3,15 @@ import React, { useState, useMemo } from 'react';
 import {
   Plus, Clock, Trash2, Calendar as CalendarIcon, ChevronDown, Droplet, Activity, Camera, Loader2
 } from 'lucide-react';
-import { BloodSugarEntry } from '../App';
-import { DailyMealPlan, MealItem } from '../types';
-import { analyzeFoodImage } from '../services/api';
+import { BloodSugarEntry } from '@/App';
+import { DailyMealPlan, MealItem } from '@/types';
+import { analyzeFoodImage } from '@/services/api';
+
+interface MealPlan {
+  breakfast: string;
+  lunch: string;
+  dinner: string;
+}
 
 interface MealRecordProps {
   bloodSugarHistory: Record<string, BloodSugarEntry>;
