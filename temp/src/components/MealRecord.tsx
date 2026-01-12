@@ -1,9 +1,11 @@
 
 import React, { useState, useMemo } from 'react';
-import { 
-  Plus, Clock, Trash2, Calendar as CalendarIcon, ChevronDown, Droplet, Activity
+import {
+  Plus, Clock, Trash2, Calendar as CalendarIcon, ChevronDown, Droplet, Activity, Camera, Loader2
 } from 'lucide-react';
-import { BloodSugarEntry } from '../App';
+import { BloodSugarEntry } from '@/App';
+import { DailyMealPlan, MealItem } from '@/types';
+import { analyzeFoodImage } from '@/services/api';
 
 interface MealPlan {
   breakfast: string;
@@ -14,21 +16,27 @@ interface MealPlan {
 interface MealRecordProps {
   bloodSugarHistory: Record<string, BloodSugarEntry>;
   onUpdateBloodSugar: (date: string, data: BloodSugarEntry) => void;
+  mealData: Record<string, DailyMealPlan>;
+  onUpdateMeal: (date: string, time: 'breakfast' | 'lunch' | 'dinner', item: MealItem) => void;
+  userId: string;
 }
 
-const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloodSugar }) => {
+const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloodSugar, mealData, onUpdateMeal, userId }) => {
   const todayStr = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [viewDate, setViewDate] = useState<Date>(new Date());
   const [isMonthView, setIsMonthView] = useState(false);
-  
-  const [mealData, setMealData] = useState<Record<string, MealPlan>>(() => {
-    const saved = localStorage.getItem('caremeal_meal_plan');
-    return saved ? JSON.parse(saved) : {};
-  });
 
-  const [editingMeal, setEditingMeal] = useState<{type: keyof MealPlan | 'fasting' | 'postBreakfast' | 'postLunch' | 'postDinner', date: string} | null>(null);
-  const [tempText, setTempText] = useState('');
+  const [editingMeal, setEditingMeal] = useState<{ type: 'breakfast' | 'lunch' | 'dinner' | 'fasting' | 'postBreakfast' | 'postLunch' | 'postDinner', date: string } | null>(null);
+
+  // Temp states for structured meal data
+  const [tempMenu, setTempMenu] = useState('');
+  const [tempCal, setTempCal] = useState<number | string>('');
+  const [tempCarb, setTempCarb] = useState<number | string>('');
+  const [tempProt, setTempProt] = useState<number | string>('');
+  const [tempFat, setTempFat] = useState<number | string>('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
   const [tempValue, setTempValue] = useState<number | string>('');
 
   const weekDates = useMemo(() => {
@@ -65,23 +73,48 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
     return days;
   }, [viewDate, todayStr]);
 
-  const currentMeals = mealData[selectedDate] || { breakfast: '', lunch: '', dinner: '' };
+  const currentMeals = mealData[selectedDate] || {};
   const currentBloodSugar = bloodSugarHistory[selectedDate] || {};
+
+  const parseAIResponse = (text: string) => {
+    try {
+      const jsonMatch = text.match(/###JSON_START###([\s\S]*?)###JSON_END###/);
+      if (jsonMatch && jsonMatch[1]) {
+        const data = JSON.parse(jsonMatch[1]);
+        return {
+          menu: data.menu || '',
+          nutrition: {
+            calories: data.calories || 0,
+            carbs: data.carbs || 0,
+            protein: data.protein || 0,
+            fat: data.fat || 0
+          }
+        };
+      }
+    } catch (e) {
+      console.error("JSON parsing failed", e);
+    }
+    return null;
+  };
 
   const handleEdit = (type: any, isSugar: boolean = false) => {
     setEditingMeal({ type, date: selectedDate });
     if (isSugar) {
       setTempValue(currentBloodSugar[type as keyof BloodSugarEntry] || '');
-      setTempText('');
     } else {
-      setTempText(currentMeals[type as keyof MealPlan]);
-      setTempValue('');
+      // Load existing meal data if available
+      const meal = (currentMeals as any)[type] as MealItem | undefined;
+      setTempMenu(meal?.menu || '');
+      setTempCal(meal?.nutrition.calories || '');
+      setTempCarb(meal?.nutrition.carbs || '');
+      setTempProt(meal?.nutrition.protein || '');
+      setTempFat(meal?.nutrition.fat || '');
     }
   };
 
   const saveData = () => {
     if (!editingMeal) return;
-    
+
     if (['fasting', 'postBreakfast', 'postLunch', 'postDinner'].includes(editingMeal.type)) {
       const val = tempValue === '' ? undefined : Number(tempValue);
       onUpdateBloodSugar(selectedDate, {
@@ -89,17 +122,45 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
         [editingMeal.type]: val
       });
     } else {
-      const newMealData = {
-        ...mealData,
-        [selectedDate]: {
-          ...currentMeals,
-          [editingMeal.type]: tempText
+      const newItem: MealItem = {
+        menu: tempMenu,
+        nutrition: {
+          calories: Number(tempCal) || 0,
+          carbs: Number(tempCarb) || 0,
+          protein: Number(tempProt) || 0,
+          fat: Number(tempFat) || 0,
         }
       };
-      setMealData(newMealData);
-      localStorage.setItem('caremeal_meal_plan', JSON.stringify(newMealData));
+      onUpdateMeal(selectedDate, editingMeal.type as 'breakfast' | 'lunch' | 'dinner', newItem);
     }
     setEditingMeal(null);
+  };
+
+  const handleImageAnalysis = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsAnalyzing(true);
+    try {
+      const response = await analyzeFoodImage(userId, file);
+      const parsed = parseAIResponse(response.reply);
+
+      if (parsed) {
+        setTempMenu(parsed.menu);
+        setTempCal(parsed.nutrition.calories);
+        setTempCarb(parsed.nutrition.carbs);
+        setTempProt(parsed.nutrition.protein);
+        setTempFat(parsed.nutrition.fat);
+        alert("분석 완료! 내용을 확인하고 수정해주세요.");
+      } else {
+        setTempMenu(response.reply.slice(0, 100) + "...");
+        alert("자동 분석에 실패하여 텍스트만 가져왔습니다.");
+      }
+    } catch (err) {
+      alert("이미지 분석 실패");
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const getSugarStatusColor = (val: number, type: string) => {
@@ -200,9 +261,17 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
                     <span className="text-sm font-bold text-gray-900">{slot.label}</span>
                     <span className="text-[10px] text-gray-400"><Clock size={10} className="inline mr-1" />{slot.time}</span>
                   </div>
-                  <p className={`text-sm mt-0.5 ${currentMeals[slot.id as keyof MealPlan] ? 'text-gray-800 font-medium' : 'text-gray-300 italic'}`}>
-                    {currentMeals[slot.id as keyof MealPlan] || '식단 기록 전'}
+                  <p className={`text-sm mt-0.5 ${currentMeals[slot.id as keyof DailyMealPlan] ? 'text-gray-800 font-medium' : 'text-gray-300 italic'}`}>
+                    {currentMeals[slot.id as keyof DailyMealPlan]?.menu || '식단 기록 전'}
                   </p>
+                  {currentMeals[slot.id as keyof DailyMealPlan] && (
+                    <div className="flex space-x-2 mt-1 text-xs text-gray-400">
+                      <span>{currentMeals[slot.id as keyof DailyMealPlan]?.nutrition.calories}kcal</span>
+                      <span>탄수화물:{currentMeals[slot.id as keyof DailyMealPlan]?.nutrition.carbs}</span>
+                      <span>프로틴:{currentMeals[slot.id as keyof DailyMealPlan]?.nutrition.protein}</span>
+                      <span>지방:{currentMeals[slot.id as keyof DailyMealPlan]?.nutrition.fat}</span>
+                    </div>
+                  )}
                 </div>
               </div>
               <button onClick={() => handleEdit(slot.id)} className="w-10 h-10 rounded-2xl bg-primary/10 text-primary flex items-center justify-center">
@@ -236,22 +305,59 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
             <h3 className="text-lg font-bold text-gray-900 mb-4">
               {editingMeal.type.startsWith('post') || editingMeal.type === 'fasting' ? '혈당 기록' : '식단 기록'}
             </h3>
-            
+
             {editingMeal.type.startsWith('post') || editingMeal.type === 'fasting' ? (
               <div className="relative">
-                <input 
-                  type="number" 
-                  autoFocus 
-                  value={tempValue} 
-                  onChange={(e) => setTempValue(e.target.value)} 
+                <input
+                  type="number"
+                  autoFocus
+                  value={tempValue}
+                  onChange={(e) => setTempValue(e.target.value)}
                   placeholder="혈당 수치 입력"
-                  className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-primary/20 text-xl font-black text-center" 
+                  className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-primary/20 text-xl font-black text-center"
                 />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">mg/dL</span>
               </div>
             ) : (
-              <textarea autoFocus value={tempText} onChange={(e) => setTempText(e.target.value)} placeholder="어떤 음식을 드셨나요?"
-                className="w-full h-32 p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-primary/20 text-sm resize-none" />
+              <div className="space-y-3">
+                <div className="flex items-center space-x-2 mb-2">
+                  <label className="flex items-center space-x-2 bg-gray-100 px-4 py-2 rounded-xl text-xs font-bold text-gray-600 cursor-pointer active:scale-95 transition-transform">
+                    {isAnalyzing ? <Loader2 className="animate-spin" size={16} /> : <Camera size={16} />}
+                    <span>{isAnalyzing ? '분석 중...' : '사진으로 자동 입력'}</span>
+                    <input type="file" accept="image/*" className="hidden" onChange={handleImageAnalysis} disabled={isAnalyzing} />
+                  </label>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-400">메뉴 이름 / 설명</label>
+                  <textarea
+                    autoFocus
+                    value={tempMenu}
+                    onChange={(e) => setTempMenu(e.target.value)}
+                    placeholder="예: 현미밥 1공기, 미역국, 고등어구이"
+                    className="w-full h-20 p-3 bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-primary/20 text-sm resize-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-400">칼로리 (kcal)</label>
+                    <input type="number" value={tempCal} onChange={(e) => setTempCal(e.target.value)} className="w-full p-3 bg-gray-50 rounded-xl text-sm font-bold" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-400">탄수화물 (g)</label>
+                    <input type="number" value={tempCarb} onChange={(e) => setTempCarb(e.target.value)} className="w-full p-3 bg-gray-50 rounded-xl text-sm font-bold" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-400">단백질 (g)</label>
+                    <input type="number" value={tempProt} onChange={(e) => setTempProt(e.target.value)} className="w-full p-3 bg-gray-50 rounded-xl text-sm font-bold" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-400">지방 (g)</label>
+                    <input type="number" value={tempFat} onChange={(e) => setTempFat(e.target.value)} className="w-full p-3 bg-gray-50 rounded-xl text-sm font-bold" />
+                  </div>
+                </div>
+              </div>
             )}
 
             <div className="flex space-x-2 mt-6">

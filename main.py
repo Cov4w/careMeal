@@ -47,13 +47,33 @@ class LoginRequest(BaseModel):
 KB_ID = os.getenv("KB_ID")  # 환경 변수에서 로드
 MODEL_ARN = "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0"
 
+# AWS credentials 환경 변수에서 로드
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_DEFAULT_REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+
 # --- AWS 클라이언트 연결 (이 부분이 없어서 에러가 났던 겁니다!) ---
 # 1) Bedrock 연결
-bedrock_agent = boto3.client(service_name='bedrock-agent-runtime', region_name='us-east-1')
-bedrock_runtime = boto3.client(service_name='bedrock-runtime', region_name='us-east-1') # 이미지 분석용 추가
+bedrock_agent = boto3.client(
+    service_name='bedrock-agent-runtime',
+    region_name=AWS_DEFAULT_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+)
+bedrock_runtime = boto3.client(
+    service_name='bedrock-runtime',
+    region_name=AWS_DEFAULT_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+)
 
 # 2) DynamoDB 연결
-dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+dynamodb = boto3.resource(
+    'dynamodb',
+    region_name=AWS_DEFAULT_REGION,
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+)
 
 # 3) 테이블 연결
 chat_table = dynamodb.Table('CareMeal-ChatLog') # 채팅 로그용 테이블
@@ -337,48 +357,10 @@ async def analyze_food_endpoint(
         image_bytes = await file.read()
         encoded_image = base64.b64encode(image_bytes).decode("utf-8")
         
-        # 로그 저장 (사용자가 사진을 보냄)
         save_to_dynamodb(user_id, 'user', f"📸 [사진 업로드] {file.filename} 분석 요청")
 
-        # 2. 이미지 분석 모델 (Claude 3.5 Sonnet) 호출
-        model_id = "anthropic.claude-3-5-sonnet-20240620-v1:0"
-        payload = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 1000,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": file.content_type, # 예: "image/jpeg"
-                                "data": encoded_image
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": "이 음식 사진을 분석해줘. 메뉴 이름과 탄단지(탄수화물, 단백질, 지방) 추정치와 추정 칼로리를 알려줘. 만약 음식이 아니라면 그렇다고 말해줘. 그리고 당뇨 환자라고 생각했을 때 이 사진의 영양성분이 어떤지와 혈당 스파이크 예상 수치도 평가해줘"
-                        }
-                    ]
-                }
-            ]
-        }
-        
-        # Bedrock Invoke Code
-        response = bedrock_runtime.invoke_model(
-            modelId=model_id,
-            body=json.dumps(payload)
-        )
-        
-        response_body = json.loads(response.get("body").read())
-        analysis_raw_result = response_body["content"][0]["text"]
-        print(f"🤖 1차 분석 완료: {analysis_raw_result[:50]}...")
-
-        # 3. 유저 정보 조회 및 2차 가공 (페르소나 + RAG)
+        # 2. 유저 정보 및 페르소나 준비
         profile = get_user_profile(user_id)
-        
         user_info_str = "정보 없음 (비회원)"
         persona_style = "너는 30년 경력의 전문의 '김닥터'야. 환자에게 따뜻하게 대하고 의학적 사실에 기반해 답변해줘."
 
@@ -387,41 +369,75 @@ async def analyze_food_endpoint(
             diabetes_type = profile.get('diabetes_type', '일반')
             user_info_str = f"이름: {profile['name']}, 나이: {age}세, 진단명: {diabetes_type}"
             persona_style = get_persona_by_age(age, diabetes_type)
+
+        # 3. System Prompt 구성 (페르소나 + 지시사항 + JSON 포맷)
+        system_prompt = f"""
+        당신은 당뇨 환자를 돕는 전문 의료 AI입니다.
+        아래 페르소나와 환자 정보를 바탕으로, 사용자가 업로드한 음식 사진을 분석하고 영양학적 조언을 해주세요.
         
-        persona = f"""
         [페르소나 지침]
         {persona_style}
         
-        [현재 대화 중인 환자 정보]
+        [환자 정보]
         {user_info_str}
         
-        [시스템 알림: 사용자가 식단 사진을 업로드했습니다. 아래는 이미지 분석 모델이 추출한 데이터입니다.]
-        분석 결과: {analysis_raw_result}
-
-        [지시사항]
-        1. 위 페르소나와 환자 정보를 바탕으로 식단에 대한 전문적인 피드백을 주세요.
-        2. 분석 텍스트를 기계적으로 나열하지 말고, 당신의 페르소나로 자연스럽게 설명해주세요.
+        [필수 지시사항]
+        1. 사진의 음식이 무엇인지 파악하고 메뉴 이름을 알려주세요.
+        2. 대략적인 칼로리와 탄수화물, 단백질, 지방을 추정하세요.
+        3. 당뇨 환자 관점에서 섭취 시 주의할 점(혈당 스파이크 등)을 친절하게 설명하세요.
+        4. ★필수: 답변의 맨 마지막에 반드시 아래 JSON 데이터만 정확히 추가하세요. 다른 설명 없이 JSON 블록만 있어야 합니다.
+        ###JSON_START###
+        {{
+            "menu": "메뉴 이름",
+            "calories": 0,
+            "carbs": 0,
+            "protein": 0,
+            "fat": 0
+        }}
+        ###JSON_END###
         """
-        
-        # Agent(RAG) 호출로 최종 답변 생성
-        agent_response = bedrock_agent.retrieve_and_generate(
-            input={'text': persona},
-            retrieveAndGenerateConfiguration={
-                'type': 'KNOWLEDGE_BASE',
-                'knowledgeBaseConfiguration': {
-                    'knowledgeBaseId': KB_ID,
-                    'modelArn': MODEL_ARN
+
+        # 4. Bedrock Claude 3.5 호출 (Single Call)
+        model_id = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+        payload = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 1500,
+            "system": system_prompt, # System Prompt 사용
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": file.content_type,
+                                "data": encoded_image
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": "이 음식 사진을 분석해서 내 상태에 맞는 조언을 해줘."
+                        }
+                    ]
                 }
-            }
-        )
-        final_answer = agent_response['output']['text']
+            ]
+        }
         
-        # AI 답변 저장
+        response = bedrock_runtime.invoke_model(
+            modelId=model_id,
+            body=json.dumps(payload)
+        )
+        
+        response_body = json.loads(response.get("body").read())
+        final_answer = response_body["content"][0]["text"]
+        print(f"🤖 AI 답변 생성 완료 (길이: {len(final_answer)})")
+        
+        # 5. 저장 및 리턴
         save_to_dynamodb(user_id, 'ai', final_answer)
         
         return {
             "reply": final_answer,
-            "raw_analysis": analysis_raw_result, # 디버깅용으로 원본도 같이 줌
             "status": "success"
         }
 

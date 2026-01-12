@@ -12,6 +12,7 @@ export interface Message {
   timestamp: Date;
   sources?: string[];
   image?: string; // Base64 or URL
+  isAnalysis?: boolean; // 식단 분석 결과 여부
 }
 
 export interface ChatRequest {
@@ -42,4 +43,24 @@ export interface LoginResponse {
   status: string;
   message: string;
   data?: any; // Using any for flexibility with DiagnosisResult
+}
+
+// 식단 기록용 데이터 구조
+export interface NutritionInfo {
+  calories: number;
+  carbs: number; // g
+  protein: number; // g
+  fat: number; // g
+}
+
+export interface MealItem {
+  menu: string;
+  nutrition: NutritionInfo;
+  image?: string; // Base64 (Thumbnail) or URL
+}
+
+export interface DailyMealPlan {
+  breakfast?: MealItem;
+  lunch?: MealItem;
+  dinner?: MealItem;
 }

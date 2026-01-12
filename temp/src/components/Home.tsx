@@ -2,7 +2,7 @@
 import React, { useMemo } from 'react';
 import { ChevronRight, Send, Sparkles, Activity, PieChart, Apple, Droplet, TrendingUp } from 'lucide-react';
 import { DiagnosisResult } from './Diagnosis';
-import { BloodSugarEntry } from '../App';
+import { BloodSugarEntry } from '@/App';
 
 interface HomeProps {
   diagnosisData: DiagnosisResult | null;
