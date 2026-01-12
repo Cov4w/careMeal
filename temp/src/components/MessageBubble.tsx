@@ -2,7 +2,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import { User as UserIcon, Stethoscope, Trash2, ChevronRight, Utensils } from 'lucide-react';
-import { Message } from '../types';
+import { Message } from '@/types';
 
 interface MessageBubbleProps {
   message: Message;

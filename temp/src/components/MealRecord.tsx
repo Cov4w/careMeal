@@ -3,7 +3,7 @@ import React, { useState, useMemo } from 'react';
 import { 
   Plus, Clock, Trash2, Calendar as CalendarIcon, ChevronDown, Droplet, Activity
 } from 'lucide-react';
-import { BloodSugarEntry } from '../App';
+import { BloodSugarEntry } from '@/App';
 
 interface MealPlan {
   breakfast: string;

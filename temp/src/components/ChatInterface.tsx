@@ -3,8 +3,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, ArrowLeft, Stethoscope, RefreshCcw, History, Trash2, X, MessageSquare, Camera } from 'lucide-react';
 import MessageBubble from './MessageBubble';
 import TypingIndicator from './TypingIndicator';
-import { Message } from '../types';
-import { fetchChatResponse, analyzeFoodImage } from '../services/api';
+import { Message } from '@/types';
+import { fetchChatResponse, analyzeFoodImage } from '@/services/api';
 
 interface ChatInterfaceProps {
   onBack: () => void;
