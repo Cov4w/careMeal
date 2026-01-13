@@ -59,6 +59,27 @@ class ChatLog(Base):
     content = Column(Text)
     timestamp = Column(DateTime, default=datetime.now)
 
+class MealRecord(Base):
+    __tablename__ = "meal_records"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    date = Column(String, index=True) # YYYY-MM-DD
+    meal_type = Column(String) # breakfast, lunch, dinner, snack
+    menu = Column(String)
+    calories = Column(Integer)
+    carbs = Column(Integer)
+    protein = Column(Integer)
+    fat = Column(Integer)
+    image_url = Column(String, nullable=True)
+
+class HealthRecord(Base):
+    __tablename__ = "health_records"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    date = Column(String, index=True)
+    time_slot = Column(String) # fasting, post_morning, post_lunch...
+    value = Column(Integer) # 혈당 수치
+
 # DB 테이블 생성
 Base.metadata.create_all(bind=engine)
 
