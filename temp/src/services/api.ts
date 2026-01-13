@@ -71,3 +71,70 @@ export const analyzeFoodImage = async (userId: string, imageFile: File): Promise
     throw error;
   }
 };
+
+// Meal record types
+export interface MealRecordData {
+  user_id: string;
+  date: string;
+  meals?: {
+    breakfast?: {
+      menu: string;
+      calories: number;
+      carbs: number;
+      protein: number;
+      fat: number;
+    };
+    lunch?: {
+      menu: string;
+      calories: number;
+      carbs: number;
+      protein: number;
+      fat: number;
+    };
+    dinner?: {
+      menu: string;
+      calories: number;
+      carbs: number;
+      protein: number;
+      fat: number;
+    };
+  };
+  blood_sugar?: {
+    fasting?: number;
+    postBreakfast?: number;
+    postLunch?: number;
+    postDinner?: number;
+  };
+}
+
+export const fetchMealRecord = async (userId: string, date: string): Promise<MealRecordData | null> => {
+  try {
+    const response = await axios.get<MealRecordData>(`${API_BASE_URL}/records/${userId}`, {
+      params: { date },
+      timeout: 5000,
+    });
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      // No data for this date, return null
+      return null;
+    }
+    console.error("Failed to fetch meal record", error);
+    throw error;
+  }
+};
+
+export const saveMealRecord = async (data: MealRecordData): Promise<{ status: string }> => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/records`, data, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      timeout: 5000,
+    });
+    return response.data;
+  } catch (error) {
+    console.error("Failed to save meal record", error);
+    throw error;
+  }
+};

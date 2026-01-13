@@ -1,11 +1,11 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Plus, Clock, Trash2, Calendar as CalendarIcon, ChevronDown, Droplet, Activity, Camera, Loader2
 } from 'lucide-react';
 import { BloodSugarEntry } from '@/App';
 import { DailyMealPlan, MealItem } from '@/types';
-import { analyzeFoodImage } from '@/services/api';
+import { analyzeFoodImage, fetchMealRecord, saveMealRecord, MealRecordData } from '@/services/api';
 
 interface MealPlan {
   breakfast: string;
@@ -76,6 +76,62 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
   const currentMeals = mealData[selectedDate] || {};
   const currentBloodSugar = bloodSugarHistory[selectedDate] || {};
 
+  // Fetch meal record data from backend when selectedDate changes
+  useEffect(() => {
+    const loadMealRecord = async () => {
+      try {
+        const data = await fetchMealRecord(userId, selectedDate);
+        if (data) {
+          // Update blood sugar data
+          if (data.blood_sugar) {
+            onUpdateBloodSugar(selectedDate, data.blood_sugar as BloodSugarEntry);
+          }
+
+          // Update meal data
+          if (data.meals) {
+            if (data.meals.breakfast) {
+              onUpdateMeal(selectedDate, 'breakfast', {
+                menu: data.meals.breakfast.menu,
+                nutrition: {
+                  calories: data.meals.breakfast.calories,
+                  carbs: data.meals.breakfast.carbs,
+                  protein: data.meals.breakfast.protein,
+                  fat: data.meals.breakfast.fat,
+                }
+              });
+            }
+            if (data.meals.lunch) {
+              onUpdateMeal(selectedDate, 'lunch', {
+                menu: data.meals.lunch.menu,
+                nutrition: {
+                  calories: data.meals.lunch.calories,
+                  carbs: data.meals.lunch.carbs,
+                  protein: data.meals.lunch.protein,
+                  fat: data.meals.lunch.fat,
+                }
+              });
+            }
+            if (data.meals.dinner) {
+              onUpdateMeal(selectedDate, 'dinner', {
+                menu: data.meals.dinner.menu,
+                nutrition: {
+                  calories: data.meals.dinner.calories,
+                  carbs: data.meals.dinner.carbs,
+                  protein: data.meals.dinner.protein,
+                  fat: data.meals.dinner.fat,
+                }
+              });
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load meal record:", error);
+      }
+    };
+
+    loadMealRecord();
+  }, [selectedDate, userId]);
+
   const parseAIResponse = (text: string) => {
     try {
       const jsonMatch = text.match(/###JSON_START###([\s\S]*?)###JSON_END###/);
@@ -112,15 +168,20 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
     }
   };
 
-  const saveData = () => {
+  const saveData = async () => {
     if (!editingMeal) return;
+
+    // Update local state first
+    let updatedBloodSugar = { ...currentBloodSugar };
+    let updatedMeals = { ...currentMeals };
 
     if (['fasting', 'postBreakfast', 'postLunch', 'postDinner'].includes(editingMeal.type)) {
       const val = tempValue === '' ? undefined : Number(tempValue);
-      onUpdateBloodSugar(selectedDate, {
+      updatedBloodSugar = {
         ...currentBloodSugar,
         [editingMeal.type]: val
-      });
+      };
+      onUpdateBloodSugar(selectedDate, updatedBloodSugar);
     } else {
       const newItem: MealItem = {
         menu: tempMenu,
@@ -131,8 +192,81 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
           fat: Number(tempFat) || 0,
         }
       };
+      updatedMeals = {
+        ...currentMeals,
+        [editingMeal.type]: newItem
+      };
       onUpdateMeal(selectedDate, editingMeal.type as 'breakfast' | 'lunch' | 'dinner', newItem);
     }
+
+    // Prepare data for backend
+    const recordData: MealRecordData = {
+      user_id: userId,
+      date: selectedDate,
+      meals: {},
+      blood_sugar: {}
+    };
+
+    // Collect all meal data for this date
+    const mealsToSave = ['fasting', 'postBreakfast', 'postLunch', 'postDinner'].includes(editingMeal.type)
+      ? currentMeals
+      : updatedMeals;
+
+    if (mealsToSave.breakfast) {
+      recordData.meals!.breakfast = {
+        menu: mealsToSave.breakfast.menu,
+        calories: mealsToSave.breakfast.nutrition.calories,
+        carbs: mealsToSave.breakfast.nutrition.carbs,
+        protein: mealsToSave.breakfast.nutrition.protein,
+        fat: mealsToSave.breakfast.nutrition.fat,
+      };
+    }
+    if (mealsToSave.lunch) {
+      recordData.meals!.lunch = {
+        menu: mealsToSave.lunch.menu,
+        calories: mealsToSave.lunch.nutrition.calories,
+        carbs: mealsToSave.lunch.nutrition.carbs,
+        protein: mealsToSave.lunch.nutrition.protein,
+        fat: mealsToSave.lunch.nutrition.fat,
+      };
+    }
+    if (mealsToSave.dinner) {
+      recordData.meals!.dinner = {
+        menu: mealsToSave.dinner.menu,
+        calories: mealsToSave.dinner.nutrition.calories,
+        carbs: mealsToSave.dinner.nutrition.carbs,
+        protein: mealsToSave.dinner.nutrition.protein,
+        fat: mealsToSave.dinner.nutrition.fat,
+      };
+    }
+
+    // Collect all blood sugar data for this date
+    const bloodSugarToSave = ['fasting', 'postBreakfast', 'postLunch', 'postDinner'].includes(editingMeal.type)
+      ? updatedBloodSugar
+      : currentBloodSugar;
+
+    if (bloodSugarToSave.fasting !== undefined) {
+      recordData.blood_sugar!.fasting = bloodSugarToSave.fasting;
+    }
+    if (bloodSugarToSave.postBreakfast !== undefined) {
+      recordData.blood_sugar!.postBreakfast = bloodSugarToSave.postBreakfast;
+    }
+    if (bloodSugarToSave.postLunch !== undefined) {
+      recordData.blood_sugar!.postLunch = bloodSugarToSave.postLunch;
+    }
+    if (bloodSugarToSave.postDinner !== undefined) {
+      recordData.blood_sugar!.postDinner = bloodSugarToSave.postDinner;
+    }
+
+    // Save to backend
+    try {
+      await saveMealRecord(recordData);
+      console.log("Meal record saved successfully");
+    } catch (error) {
+      console.error("Failed to save meal record to backend:", error);
+      alert("데이터 저장에 실패했습니다. 다시 시도해주세요.");
+    }
+
     setEditingMeal(null);
   };
 

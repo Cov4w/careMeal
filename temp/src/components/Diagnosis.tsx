@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   ClipboardCheck, CheckCircle2, ChevronRight, ChevronLeft,
-  Activity, ShieldCheck, Zap, Sparkles, User, Heart, Utensils,
+  Activity, ShieldCheck, Sparkles, User,
   Stethoscope, Thermometer, Droplets
 } from 'lucide-react';
 
@@ -41,9 +41,8 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
   const [step, setStep] = useState(1);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  // 기본 7단계 + 질환별 심화 단계가 필요한 경우 동적으로 조절할 수 있으나, 
-  // UX 일관성을 위해 8단계로 고정하고 질환이 없으면 해당 단계를 건너뛰거나 요약으로 처리합니다.
-  const totalSteps = 8;
+  // 기본 7단계 (건강관심사 제거로 총 7단계)
+  const totalSteps = 7;
 
   const [formData, setFormData] = useState({
     name: initialName,
@@ -54,7 +53,7 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
     interests: [] as string[],
     // 질환별 정밀 정보
     diseaseDetails: {
-      diabetes: { hbA1c: '', year: '', medType: '경구제' },
+      diabetes: { hbA1c: '', year: '', medType: [] as string[] },
       hypertension: { avgBP: '', meds: '복용중' },
       kidney: { gfr: '', dialysis: '안함' },
       lipid: { ldl: '', hdl: '' }
@@ -105,14 +104,6 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
     onConditionsChange(newConditions);
   };
 
-  const toggleInterest = (id: string) => {
-    setFormData(prev => ({
-      ...prev,
-      interests: prev.interests.includes(id)
-        ? prev.interests.filter(i => i !== id)
-        : [...prev.interests, id]
-    }));
-  };
 
   const nextStep = () => {
     if (step === 1 && (!formData.name || !formData.age || !formData.height || !formData.weight)) return alert("모든 기본 정보를 입력해주세요.");
@@ -125,8 +116,7 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
       return;
     }
 
-    if (step === 4 && formData.interests.length === 0) return alert("최소 하나 이상의 관심사를 선택해주세요.");
-    if (step === 8 && (!formData.consentHealth || !formData.consentAI)) return alert("필수 동의 항목에 체크해주세요.");
+    if (step === 7 && (!formData.consentHealth || !formData.consentAI)) return alert("필수 동의 항목에 체크해주세요.");
 
     if (step < totalSteps) {
       setStep(step + 1);
@@ -253,7 +243,12 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
                     <Droplets size={18} /> <span>당뇨병 정밀 정보</span>
                   </div>
                   <Input label="당화혈색소 (HbA1c, %)" value={formData.diseaseDetails.diabetes.hbA1c} onChange={(v: string) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, hbA1c: v } } })} type="number" placeholder="6.5" />
-                  <HabitSelect label="치료 방식" options={['경구제', '인슐린', '병행', '조절안함']} value={formData.diseaseDetails.diabetes.medType} onChange={(v: string) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, medType: v } } })} />
+                  <MultiSelect
+                    label="치료 방식 (복수 선택 가능)"
+                    options={['경구제', '인슐린', '조절안함']}
+                    values={formData.diseaseDetails.diabetes.medType}
+                    onChange={(v: string[]) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, medType: v } } })}
+                  />
                 </div>
               )}
 
@@ -288,23 +283,8 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
 
         {step === 4 && (
           <div className="space-y-6 animate-fadeIn">
-            <h2 className="text-xl font-black text-gray-900">4️⃣ 나의 건강 관심사</h2>
-            <p className="text-xs text-gray-400 -mt-4">개선하고 싶은 건강 분야를 선택해주세요. (복수 선택)</p>
-            <div className="grid grid-cols-2 gap-3">
-              {['피부건강', '모발/탈모', '체중조절', '소화기능', '피로회복', '면역력'].map(id => (
-                <button key={id} onClick={() => toggleInterest(id)} className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 transition-all ${formData.interests.includes(id) ? 'border-primary bg-primary/5' : 'border-white bg-white shadow-sm'}`}>
-                  <Heart size={20} className={`mb-2 ${formData.interests.includes(id) ? 'text-primary' : 'text-gray-200'}`} />
-                  <span className={`text-sm font-bold ${formData.interests.includes(id) ? 'text-primary' : 'text-gray-700'}`}>{id}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {step === 5 && (
-          <div className="space-y-6 animate-fadeIn">
-            <h2 className="text-xl font-black text-gray-900">5️⃣ 건강 지표 기록</h2>
-            <div className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm space-y-4">
+            <h2 className="text-2xl font-black text-gray-900">4️⃣ 건강 지표 기록</h2>
+            <div className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm space-y-5">
               <Input label="공복 혈당 (mg/dL)" value={formData.healthMetrics.bloodSugar} onChange={(v: string) => setFormData({ ...formData, healthMetrics: { ...formData.healthMetrics, bloodSugar: v } })} type="number" placeholder="95" />
               <Input label="수축기 혈압 (mmHg)" value={formData.healthMetrics.bloodPressure} onChange={(v: string) => setFormData({ ...formData, healthMetrics: { ...formData.healthMetrics, bloodPressure: v } })} type="number" placeholder="120" />
               <Input label="총 콜레스테롤 (mg/dL)" value={formData.healthMetrics.cholesterol} onChange={(v: string) => setFormData({ ...formData, healthMetrics: { ...formData.healthMetrics, cholesterol: v } })} type="number" placeholder="190" />
@@ -312,32 +292,32 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
           </div>
         )}
 
-        {step === 6 && (
-          <div className="space-y-6 animate-fadeIn">
-            <h2 className="text-xl font-black text-gray-900">6️⃣ 정밀 식습관 분석</h2>
-            <div className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm space-y-6">
-              <HabitSelect label="식이섬유: 채소 섭취 빈도" options={['매 끼니', '하루 1회', '주 3-4회', '거의 안 함']} value={formData.eatingHabits.veggieFrequency} onChange={(v: string) => setFormData({ ...formData, eatingHabits: { ...formData.eatingHabits, veggieFrequency: v } })} />
-              <HabitSelect label="당류: 단 음료/디저트 섭취" options={['거의 안 함', '주 1-2회', '매일 1회', '매일 2회 이상']} value={formData.eatingHabits.sugarIntake} onChange={(v: string) => setFormData({ ...formData, eatingHabits: { ...formData.eatingHabits, sugarIntake: v } })} />
-              <HabitSelect label="지방: 주로 섭취하는 육류" options={['살코기/생선', '적당한 지방', '기름진 부위', '가공육(햄 등)']} value={formData.eatingHabits.meatType} onChange={(v: string) => setFormData({ ...formData, eatingHabits: { ...formData.eatingHabits, meatType: v } })} />
-              <HabitSelect label="나트륨: 음식의 간 정도" options={['싱겁게', '보통', '짜게', '매우 짜게']} value={formData.eatingHabits.saltLevel} onChange={(v: string) => setFormData({ ...formData, eatingHabits: { ...formData.eatingHabits, saltLevel: v } })} />
+        {step === 5 && (
+          <div className="space-y-8 animate-fadeIn">
+            <h2 className="text-2xl font-black text-gray-900">5️⃣ 정밀 식습관 분석</h2>
+            <div className="bg-white p-7 rounded-[28px] border border-gray-100 shadow-sm space-y-7">
+              <HabitSelect label="식이섬유: 채소 섭취 빈도" options={['매 끼니', '하루 1회', '주 3-4회', '거의 안 함']} value={formData.eatingHabits.veggieFrequency} onChange={(v: string) => setFormData({ ...formData, eatingHabits: { ...formData.eatingHabits, veggieFrequency: v } })} enlarged />
+              <HabitSelect label="당류: 단 음료/디저트 섭취" options={['거의 안 함', '주 1-2회', '매일 1회', '매일 2회 이상']} value={formData.eatingHabits.sugarIntake} onChange={(v: string) => setFormData({ ...formData, eatingHabits: { ...formData.eatingHabits, sugarIntake: v } })} enlarged />
+              <HabitSelect label="지방: 주로 섭취하는 육류" options={['살코기/생선', '적당한 지방', '기름진 부위', '가공육(햄 등)']} value={formData.eatingHabits.meatType} onChange={(v: string) => setFormData({ ...formData, eatingHabits: { ...formData.eatingHabits, meatType: v } })} enlarged />
+              <HabitSelect label="나트륨: 음식의 간 정도" options={['싱겁게', '보통', '짜게', '매우 짜게']} value={formData.eatingHabits.saltLevel} onChange={(v: string) => setFormData({ ...formData, eatingHabits: { ...formData.eatingHabits, saltLevel: v } })} enlarged />
             </div>
           </div>
         )}
 
-        {step === 7 && (
-          <div className="space-y-6 animate-fadeIn">
-            <h2 className="text-xl font-black text-gray-900">7️⃣ 생활 패턴 분석</h2>
-            <div className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm space-y-6">
-              <HabitSelect label="일일 활동 수준" options={['거의 좌식', '가벼운 활동', '보통 활동', '강한 활동']} value={formData.activity} onChange={(v: string) => setFormData({ ...formData, activity: v })} />
-              <div className="grid grid-cols-2 gap-4">
-                <HabitSelect label="음주" options={['안 함', '가끔', '자주']} value={formData.alcohol} onChange={(v: string) => setFormData({ ...formData, alcohol: v })} />
-                <HabitSelect label="흡연" options={['비흡연', '과거', '현재']} value={formData.smoking} onChange={(v: string) => setFormData({ ...formData, smoking: v })} />
+        {step === 6 && (
+          <div className="space-y-8 animate-fadeIn">
+            <h2 className="text-2xl font-black text-gray-900">6️⃣ 생활 패턴 분석</h2>
+            <div className="bg-white p-7 rounded-[28px] border border-gray-100 shadow-sm space-y-7">
+              <HabitSelect label="일일 활동 수준" options={['거의 좌식', '가벼운 활동', '보통 활동', '강한 활동']} value={formData.activity} onChange={(v: string) => setFormData({ ...formData, activity: v })} enlarged />
+              <div className="grid grid-cols-2 gap-5">
+                <HabitSelect label="음주" options={['안 함', '가끔', '자주']} value={formData.alcohol} onChange={(v: string) => setFormData({ ...formData, alcohol: v })} enlarged />
+                <HabitSelect label="흡연" options={['비흡연', '과거', '현재']} value={formData.smoking} onChange={(v: string) => setFormData({ ...formData, smoking: v })} enlarged />
               </div>
             </div>
           </div>
         )}
 
-        {step === 8 && (
+        {step === 7 && (
           <div className="space-y-8 animate-fadeIn py-10 text-center">
             <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center text-primary mx-auto mb-4">
               <ShieldCheck size={40} />
@@ -378,16 +358,60 @@ const Input = ({ label, value, onChange, type = "text", placeholder = "", icon }
   </div>
 );
 
-const HabitSelect = ({ label, options, value, onChange }: any) => (
-  <div className="space-y-2">
-    <p className="text-xs text-gray-400 font-bold ml-1">{label}</p>
-    <div className="flex flex-wrap bg-gray-50 p-1 rounded-xl gap-1">
+const HabitSelect = ({ label, options, value, onChange, enlarged = false }: any) => (
+  <div className={enlarged ? "space-y-3" : "space-y-2"}>
+    <p className={`font-bold ml-1 ${enlarged ? 'text-base text-gray-700' : 'text-xs text-gray-400'}`}>{label}</p>
+    <div className={`flex flex-wrap rounded-xl gap-2 ${enlarged ? 'p-2' : 'p-1'}`}>
       {options.map((opt: string) => (
-        <button key={opt} onClick={() => onChange(opt)} className={`flex-1 min-w-[80px] py-2.5 rounded-lg text-[10px] font-bold transition-all ${value === opt ? 'bg-white text-gray-900 shadow-sm border border-gray-100' : 'text-gray-400'}`}>{opt}</button>
+        <button
+          key={opt}
+          onClick={() => onChange(opt)}
+          className={`flex-1 min-w-[80px] rounded-xl font-bold transition-all border-2 ${enlarged ? 'py-3.5 text-sm' : 'py-2.5 text-[10px]'} ${
+            value === opt
+              ? 'border-primary bg-primary/5 text-primary shadow-sm'
+              : 'border-gray-100 bg-white text-gray-400 hover:border-gray-200'
+          }`}
+        >
+          {opt}
+        </button>
       ))}
     </div>
   </div>
 );
+
+const MultiSelect = ({ label, options, values, onChange }: any) => {
+  const toggleOption = (opt: string) => {
+    if (values.includes(opt)) {
+      onChange(values.filter((v: string) => v !== opt));
+    } else {
+      onChange([...values, opt]);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-gray-400 font-bold ml-1">{label}</p>
+      <div className="flex flex-wrap gap-2">
+        {options.map((opt: string) => (
+          <button
+            key={opt}
+            onClick={() => toggleOption(opt)}
+            className={`px-4 py-2.5 rounded-xl font-bold transition-all border-2 text-sm ${
+              values.includes(opt)
+                ? 'border-primary bg-primary/5 text-primary shadow-sm'
+                : 'border-gray-100 bg-white text-gray-400 hover:border-gray-200'
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              {opt}
+              {values.includes(opt) && <CheckCircle2 size={14} className="text-primary" />}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 const ConsentItem = ({ label, checked, onChange }: any) => (
   <button onClick={() => onChange(!checked)} className={`w-full p-4 rounded-2xl border-2 flex items-center text-left transition-all ${checked ? 'border-primary bg-primary/5' : 'border-gray-50 bg-white'}`}>
