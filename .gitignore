@@ -22,6 +22,10 @@ yarn-error.log*
 # Logs and Data
 chat_log.csv
 *.log
+caremeal.db
+chroma_db/
+data/*
+!data/.gitkeep
 
 #temp
 # Logs
