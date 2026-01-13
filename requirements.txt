@@ -19,4 +19,5 @@ langchain-chroma
 langchain-huggingface
 beautifulsoup4
 unstructured
+langchain-google-genai
 

@@ -14,7 +14,8 @@ from sqlalchemy import create_engine, Column, String, Integer, JSON, Text, DateT
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
-from langchain_community.chat_models import ChatOllama
+# from langchain_community.chat_models import ChatOllama # [Ollama 제거]
+from langchain_google_genai import ChatGoogleGenerativeAI # [Gemini 추가]
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -69,14 +70,13 @@ def get_db():
     finally:
         db.close()
 
-# 4. LangChain (Ollama & RAG) 설정
-# 사용자 제공 URL: https://fav.nezip.co.kr/ol1ama
-OLLAMA_BASE_URL = "https://fav.nezip.co.kr/ol1ama"
+# 4. LangChain (Gemini & RAG) 설정
+# GOOGLE_API_KEY는 .env 파일에서 자동으로 로드됩니다.
 
-# 4-1. LLM 초기화
-llm_text = ChatOllama(base_url=OLLAMA_BASE_URL, model="llama3", temperature=0.7)
-llm_vision = ChatOllama(base_url=OLLAMA_BASE_URL, model="llava", temperature=0.2)
-llm_agent = ChatOllama(base_url=OLLAMA_BASE_URL, model="llama3", temperature=0.5)
+# 4-1. LLM 초기화 (Gemini 1.5 Flash)
+llm_text = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+llm_vision = ChatGoogleGenerativeAI(model="gemini-robotics-er-1.5-preview", temperature=0.2)
+llm_agent = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.5)
 
 # 4-2. RAG 시스템 변수 (전역)
 vector_store = None
@@ -107,11 +107,11 @@ async def startup_event():
         retriever = None
 
 # 5. 데이터 구조 (Pydantic)
+from typing import Any, Optional, Union
+
 class ChatRequest(BaseModel):
     user_message: str
     user_id: str = "guest"
-
-from typing import Any, Optional, Union
 
 class SignUpRequest(BaseModel):
     user_id: str
@@ -124,6 +124,19 @@ class SignUpRequest(BaseModel):
 class LoginRequest(BaseModel):
     user_id: str
     password: str
+
+class MealItem(BaseModel):
+    menu: str
+    calories: int
+    carbs: int
+    protein: int
+    fat: int
+
+class DailyRecordRequest(BaseModel):
+    user_id: str
+    date: str
+    meals: dict[str, MealItem] # key: breakfast, lunch, dinner
+    blood_sugar: dict[str, int] # key: fasting, postBreakfast...
 
 # 6. 헬퍼 함수: 페르소나
 def get_persona_by_age(age, diabetes_type="일반"):
@@ -180,28 +193,91 @@ async def login_endpoint(request: LoginRequest, db: Session = Depends(get_db)):
         }
     }
 
+@app.get("/records/{user_id}")
+def get_records(user_id: str, date: str, db: Session = Depends(get_db)):
+    # 1. 식단 조회
+    meals = db.query(MealRecord).filter(
+        MealRecord.user_id == user_id, 
+        MealRecord.date == date
+    ).all()
+    
+    # 2. 혈당 조회
+    health = db.query(HealthRecord).filter(
+        HealthRecord.user_id == user_id, 
+        HealthRecord.date == date
+    ).all()
+    
+    return {
+        "date": date,
+        "meals": {m.meal_type: {"menu": m.menu, "calories": m.calories, "carbs": m.carbs, "protein": m.protein, "fat": m.fat} for m in meals},
+        "blood_sugar": {h.time_slot: h.value for h in health}
+    }
+
+@app.post("/records")
+def save_records(req: DailyRecordRequest, db: Session = Depends(get_db)):
+    # 기존 데이터 삭제 (해당 날짜 덮어쓰기 전략 - 간단구현)
+    db.query(MealRecord).filter(MealRecord.user_id == req.user_id, MealRecord.date == req.date).delete()
+    db.query(HealthRecord).filter(HealthRecord.user_id == req.user_id, HealthRecord.date == req.date).delete()
+    
+    # 식단 저장
+    for m_type, item in req.meals.items():
+        if item.menu: # 메뉴가 있을 때만
+            db.add(MealRecord(
+                user_id=req.user_id, date=req.date, meal_type=m_type,
+                menu=item.menu, calories=item.calories, carbs=item.carbs, protein=item.protein, fat=item.fat
+            ))
+            
+    # 혈당 저장
+    for h_type, val in req.blood_sugar.items():
+        if val > 0:
+            db.add(HealthRecord(user_id=req.user_id, date=req.date, time_slot=h_type, value=val))
+            
+    db.commit()
+    return {"status": "success"}
+
+# 헬퍼 함수: DB에서 사용자 정보 가져오기
+def get_user_profile_db(user_id: str, db: Session):
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if user:
+        return {
+            "name": user.name,
+            "age": user.age,
+            "diabetes_type": user.diabetes_type,
+            "details": user.details
+        }
+    return None
+
+# 헬퍼 함수: 오늘 식단/혈당 가져오기 (AI용)
+def get_today_health_summary(user_id: str, db: Session):
+    today = datetime.now().strftime("%Y-%m-%d")
+    meals = db.query(MealRecord).filter(MealRecord.user_id == user_id, MealRecord.date == today).all()
+    health = db.query(HealthRecord).filter(HealthRecord.user_id == user_id, HealthRecord.date == today).all()
+    
+    summary = f"[오늘({today}) 건강 기록]\n"
+    if meals:
+        summary += "- 식단:\n" + "\n".join([f"  * {m.meal_type}: {m.menu} ({m.calories}kcal)" for m in meals]) + "\n"
+    else:
+        summary += "- 식단: 기록 없음\n"
+        
+    if health:
+        summary += "- 혈당:\n" + "\n".join([f"  * {h.time_slot}: {h.value}" for h in health]) + "\n"
+    else:
+        summary += "- 혈당: 기록 없음\n"
+        
+    return summary
+
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     print(f"📩 채팅 요청: {request.user_message}")
     
-    # 1. 유저 정보 조회
-    user = db.query(User).filter(User.user_id == request.user_id).first()
-    persona = "친절한 의료 AI"
-    user_info = "정보 없음"
-    
-    if user:
-        persona = get_persona_by_age(user.age, user.diabetes_type)
-        user_info = f"이름: {user.name}, 나이: {user.age}, 당뇨: {user.diabetes_type}"
-
-    # 2. RAG 검색 (문서 조회)
-    context_text = ""
-    sources = []
-    
+    # 1. RAG 검색 (기존 로직 유지)
+    context_docs = []
+    sources = [] # sources 변수 초기화
     if retriever:
         try:
             docs = retriever.invoke(request.user_message)
             if docs:
-                context_text = "\n\n".join([doc.page_content for doc in docs])
+                context_docs = [doc.page_content for doc in docs]
                 # 소스 파일명 추출 (중복 제거, OS 경로 호환)
                 sources = list(set([os.path.basename(doc.metadata.get("source", "문서")) for doc in docs]))
                 print(f"📚 검색된 문서: {sources}")
@@ -210,23 +286,34 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         except Exception as e:
             print(f"⚠️ 검색 중 오류 발생: {e}")
             
-    # 3. 시스템 프롬프트 구성 (RAG Context 주입)
+    # 2. 사용자 정보 & 오늘 기록 조회 [NEW]
+    user_profile = get_user_profile_db(request.user_id, db)
+    health_summary = get_today_health_summary(request.user_id, db)
+    
+    persona = "친절한 의료 AI" # 기본 페르소나 설정
+    if user_profile:
+        persona = get_persona_by_age(user_profile['age'], user_profile['diabetes_type'])
+
+    # 3. 시스템 프롬프트 구성
     system_prompt = f"""
-    당신은 당뇨 환자를 돕는 의료 AI입니다.
+    당신은 환자를 돕는 의료 AI입니다.
     
     [페르소나]
     {persona}
     
     [환자 정보]
-    {user_info}
+    이름/나이: {user_profile['name'] if user_profile else '알 수 없음'} / {user_profile['age'] if user_profile else '?'}
+    당뇨 유형: {user_profile['diabetes_type'] if user_profile else '?'}
     
-    [참고 자료 (RAG)]
-    {context_text if context_text else "관련 자료 없음 (일반 지식으로 답변하세요)."}
+    {health_summary}
     
-    위 [참고 자료]와 [환자 정보]를 바탕으로 환자의 질문에 전문적이고 친절하게 답변하세요.
+    [참고 의학 자료]
+    {chr(10).join(context_docs) if context_docs else "관련 자료 없음 (일반 지식으로 답변하세요)."}
+    
+    위 정보를 바탕으로 환자의 질문에 답변하세요. 특히 오늘 먹은 음식이나 혈당이 있다면 그것을 언급하며 조언하세요.
     참고 자료에 없는 내용은 지어내지 말고, 일반적인 의학 상식에 기반해 조언하세요.
     """
-
+    
     # 4. LangChain 호출
     try:
         messages = [
