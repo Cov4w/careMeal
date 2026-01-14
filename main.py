@@ -159,20 +159,37 @@ class DailyRecordRequest(BaseModel):
     meals: dict[str, MealItem] # key: breakfast, lunch, dinner
     blood_sugar: dict[str, int] # key: fasting, postBreakfast...
 
-# 6. 헬퍼 함수: 페르소나
+# 6. 헬퍼 함수: 페르소나 (말투 강화)
 def get_persona_by_age(age, diabetes_type="일반"):
     disease_context = f"환자는 현재 '{diabetes_type}' 진단을 받은 상태입니다."
     base_persona = ""
+    # 나이대별 말투를 아주 구체적으로 지시
     if 10 <= age <= 29:
-        base_persona = "[활기찬 30년 경력 트레이너] 젊은 층에 맞춰 이모지를 쓰고 실용적인 꿀팁을 줘."
+        base_persona = """
+        [Role: 열정적인 헬스 트레이너 PT쌤]
+        - 말투: "회원님! ~하셨네요! 🔥", "~하는 게 좋아요! 💪" 처럼 에너지가 넘치는 '해요체'를 쓰세요.
+        - 특징: 문장 끝마다 이모지(🔥, 💪, 🥗, 👍)를 적극적으로 붙이세요. 동기 부여를 팍팍 해주세요.
+        """
     elif 30 <= age <= 49:
-        base_persona = "[신뢰감 있는 전문의 김닥터] 바쁜 직장인을 위해 현실적인 조언과 따뜻한 격려를 해줘."
+        base_persona = """
+        [Role: 냉철하지만 따뜻한 의사 김닥터]
+        - 말투: "~입니다.", "~합니다." 처럼 정중하고 신뢰감 있는 '하십시오체'를 쓰세요.
+        - 특징: 전문적인 내용을 쉽게 풀어서 설명하되, 과한 이모지는 자제하고 단호하면서도 따뜻하게 조언하세요.
+        """
     elif 50 <= age <= 69:
-        base_persona = "[꼼꼼한 임상 영양사] 갱년기와 노화를 고려해 소화가 잘 되는 식단을 추천해줘."
+        base_persona = """
+        [Role: 꼼꼼하고 친근한 임상 영양사]
+        - 말투: "~했군요~", "~하면 좋아요." 처럼 부드럽고 나긋나긋한 '해요체'를 쓰세요.
+        - 특징: 어려운 의학 용어 대신 쉬운 비유를 사용하고, 소화가 잘 되는지 걱정해주는 멘트를 섞으세요.
+        """
     else:
-        base_persona = "[친절한 베테랑 간호사] 어르신이 이해하기 쉽게 천천히 설명하고 중요 내용은 번호를 매겨줘."
+        base_persona = """
+        [Role: 베테랑 간호사 선생님]
+        - 말투: "어르신, ~하셨어요?", "~드시면 좋습니다." 처럼 아주 예의 바르고 천천히 말하는 '존댓말'을 쓰세요.
+        - 특징: 중요한 내용은 한 번 더 강조해주고, 건강을 챙겨드리는 손녀/손자 같은 마음으로 따뜻하게 대하세요.
+        """
     
-    return f"{base_persona}\n{disease_context}\n레시피 요구시 '[[CUSTOM_DIET_LINK]]'를 마지막에 붙여."
+    return f"{base_persona}\n{disease_context}\n레시피가 필요해 보이면 답변 끝에 '[[CUSTOM_DIET_LINK]]'를 붙이세요."
 
 # 7. API 엔드포인트
 
@@ -291,48 +308,70 @@ def get_today_health_summary(user_id: str, db: Session):
 async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     print(f"📩 채팅 요청: {request.user_message}")
     
-    # 1. RAG 검색 (기존 로직 유지)
-    context_docs = []
-    sources = [] # sources 변수 초기화
+    # 1. 유저 정보 조회
+    user = db.query(User).filter(User.user_id == request.user_id).first()
+    persona = "친절한 의료 AI"
+    user_info = "정보 없음"
+    
+    if user:
+        persona = get_persona_by_age(user.age, user.diabetes_type)
+        user_info = f"이름: {user.name}, 나이: {user.age}, 보유 질환: {user.diabetes_type}"
+
+    # 2. RAG 검색 (문서 조회)
+    context_text = ""
+    sources = []
+    
     if retriever:
         try:
             docs = retriever.invoke(request.user_message)
-            if docs:
-                context_docs = [doc.page_content for doc in docs]
-                # 소스 파일명 추출 (중복 제거, OS 경로 호환)
-                sources = list(set([os.path.basename(doc.metadata.get("source", "문서")) for doc in docs]))
-                print(f"📚 검색된 문서: {sources}")
-            else:
-                print("⚠️ 관련 문서를 찾지 못했습니다.")
+            context_text = "\n\n".join([doc.page_content for doc in docs])
+            sources = list(set([os.path.basename(doc.metadata.get("source", "문서")) for doc in docs]))
+            print(f"📚 검색된 문서: {sources}")
         except Exception as e:
             print(f"⚠️ 검색 중 오류 발생: {e}")
             
-    # 2. 사용자 정보 & 오늘 기록 조회 [NEW]
-    user_profile = get_user_profile_db(request.user_id, db)
-    health_summary = get_today_health_summary(request.user_id, db)
+    # 3. 시스템 프롬프트 구성 (RAG Context 주입 + 구조화 + 초간결화 + 시간/기록 추적)
+    current_time_str = datetime.now().strftime("%Y년 %m월 %d일 %H시 %M분")
     
-    persona = "친절한 의료 AI" # 기본 페르소나 설정
-    if user_profile:
-        persona = get_persona_by_age(user_profile['age'], user_profile['diabetes_type'])
-
-    # 3. 시스템 프롬프트 구성
     system_prompt = f"""
-    당신은 환자를 돕는 의료 AI입니다.
+    당신은 당뇨 환자를 돕는 전문 의료 AI입니다.
     
-    [페르소나]
-    {persona}
+    [현재 시각]
+    {current_time_str}
     
     [환자 정보]
-    이름/나이: {user_profile['name'] if user_profile else '알 수 없음'} / {user_profile['age'] if user_profile else '?'}
-    당뇨 유형: {user_profile['diabetes_type'] if user_profile else '?'}
+    {user_info}
     
-    {health_summary}
+    [오늘의 건강 기록 (자동 추적됨)]
+    {get_today_health_summary(request.user_id, db)}
     
-    [참고 의학 자료]
-    {chr(10).join(context_docs) if context_docs else "관련 자료 없음 (일반 지식으로 답변하세요)."}
+    [참고 의학 자료 (RAG)]
+    {context_text if context_text else "관련 자료 없음 (일반적인 의학 지식으로 답변)."}
     
-    위 정보를 바탕으로 환자의 질문에 답변하세요. 특히 오늘 먹은 음식이나 혈당이 있다면 그것을 언급하며 조언하세요.
-    참고 자료에 없는 내용은 지어내지 말고, 일반적인 의학 상식에 기반해 조언하세요.
+    [🔴 핵심 지침: "질문 의도에 따른 유연한 대응"]
+    1. **답변 모드 결정**:
+       - **[A. 전체 분석 모드]**: "식단 어때?", "추천해줘" 요청 -> 아래 **[구조화된 형식]** 사용.
+       - **[B. 즉답 모드]**: "점수 몇 점?", "이거 먹어도 돼?" 질문 -> **결론부터 바로** 말하되, 설명이 필요하면 문단을 나누세요.
+    
+    2. **공통 원칙 [가독성 필수]**: 
+       - 답변이 3줄 이상 길어지면 **무조건 줄바꿈(빈 줄)**을 넣어 문단을 나누세요.
+       - 한 문단은 최대 2문장을 넘기지 마세요. 빽빽한 글은 읽기 힘듭니다.
+
+    [구조화된 형식 (전체 분석 요청 시에만 사용)]
+    ### 1. 📋 오늘의 기록
+    *   (메뉴 및 칼로리 팩트만 나열)
+
+    ### 2. 🩺 종합 분석
+    *   **총평**: (전체적인 균형 평가)
+    *   **꿀팁**: (가장 중요한 조언 1개)
+    
+    [제약 사항]
+    1. **즉답 모드**에서도 가독성을 위해 **줄바꿈**을 적극 활용하세요.
+    2. 페르소나 말투는 항상 유지하세요.
+    
+    [페르소나 및 말투 설정]
+    위 짧은 형식 안에서 아래 말투를 녹여내세요.
+    {persona}
     """
     
     # 4. LangChain 호출
@@ -367,7 +406,7 @@ async def analyze_food_endpoint(file: UploadFile = File(...), user_id: str = For
     try:
         # 이미지 읽기 & Base64 인코딩
         image_bytes = await file.read()
-        b64_image = base64.b64encode(image_bytes).decode('utf-8')
+        encoded_image = base64.b64encode(image_bytes).decode('utf-8')
         
         # 유저 정보
         user = db.query(User).filter(User.user_id == user_id).first()
@@ -376,37 +415,54 @@ async def analyze_food_endpoint(file: UploadFile = File(...), user_id: str = For
         # 프롬프트 구성
         prompt = f"""
         [페르소나] {persona}
-        이 음식 사진을 분석해줘. 메뉴 이름과 탄단지 추정치를 알려줘.
+        이 음식 사진을 분석해줘.
         
-        ★필수: 답변 마지막에 반드시 아래 JSON 포맷을 포함해.
+        [🔴 핵심 지침: "잡담 금지 & 형식 엄수"]
+        1. **서론/결론 절대 금지**: "안녕하세요", "사진을 보니~" 같은 인사말이나 부연 설명을 일절 하지 마세요.
+        2. **오직 결과만**: 아래 정해진 포맷의 텍스트만 출력하세요.
+        
+        [1단계: 사용자에게 보여줄 짧은 요약]
+        ### 📸 이미지 분석
+        * **[메뉴명]**: 약 [칼로리]kcal
+        * **📊 영양**: 탄수화물 [g], 단백질 [g], 지방 [g]
+        * **💡 한줄평**: [30자 이내 짧은 평가]
+        
+        [2단계: 시스템 데이터 (반드시 포함)]
+        위 내용 밑에 다음 JSON 포맷을 정확히 붙여줘:
         ###JSON_START###
-        {{ "menu": "메뉴명", "calories": 0, "carbs": 0, "protein": 0, "fat": 0 }}
+        {{
+            "menu": "메뉴명 (한글)",
+            "calories": 0,
+            "carbs": 0,
+            "protein": 0,
+            "fat": 0
+        }}
         ###JSON_END###
         """
-
-        # Vision 모델 호출 (Llava)
-        # LangChain ChatOllama는 멀티모달 입력을 지원함 (message content에 image_url type)
+        
         message = HumanMessage(
             content=[
                 {"type": "text", "text": prompt},
                 {
                     "type": "image_url",
-                    "image_url": f"data:image/jpeg;base64,{b64_image}"
+                    "image_url": f"data:image/jpeg;base64,{encoded_image}"
                 }
             ]
         )
         
         response = llm_vision.invoke([message])
-        ai_reply = response.content
+        result_text = response.content
+        print(f"🤖 Vision 응답: {result_text}")
         
         # 로그 저장
         db.add(ChatLog(user_id=user_id, role='user', content=f"[이미지 업로드] {file.filename}"))
-        db.add(ChatLog(user_id=user_id, role='ai', content=ai_reply))
+        db.add(ChatLog(user_id=user_id, role='ai', content=result_text))
         db.commit()
 
+        # LLM이 이미 포맷팅된 텍스트 + JSON을 주므로 그대로 리턴
         return {
-            "reply": ai_reply,
-            "status": "success"
+            "status": "success",
+            "reply": result_text 
         }
 
     except Exception as e:

@@ -8,6 +8,7 @@ import MyPage from '@/components/MyPage';
 import BottomNav from '@/components/BottomNav';
 import Login from '@/components/Login';
 import { DiagnosisResult } from '@/components/Diagnosis';
+import { analyzeFoodImage, fetchMealRecord, saveMealRecord, MealRecordData } from '@/services/api';
 import { DailyMealPlan, MealItem } from './types';
 
 export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage';
@@ -137,10 +138,57 @@ const App: React.FC = () => {
             initialMessage={initialChatMessage}
             userId={diagnosisData?.userId || 'guest'}
             onNavigate={(view) => setCurrentView(view)}
-            onSaveMeal={(time, item) => {
+            onSaveMeal={async (time, item) => {
               const today = new Date().toISOString().split('T')[0];
-              handleUpdateMeal(today, time, item);
-              alert(`${time === 'breakfast' ? '아침' : time === 'lunch' ? '점심' : '저녁'} 식단에 추가되었습니다!`);
+              const userId = diagnosisData?.userId || 'guest';
+
+              // 1. Fetch latest data from server first (Source of Truth)
+              let currentServerData: MealRecordData | null = null;
+              try {
+                currentServerData = await fetchMealRecord(userId, today);
+              } catch (e) {
+                console.warn("Failed to fetch latest records, using local state fallback.");
+              }
+
+              // Check for overwrite based on server data (or fallback to local)
+              const existingMeal = currentServerData?.meals?.[time] || mealData[today]?.[time];
+
+              if (existingMeal) {
+                const label = time === 'breakfast' ? '아침' : time === 'lunch' ? '점심' : '저녁';
+                if (!window.confirm(`오늘 ${label} 식단 기록이 이미 존재합니다. 덮어쓰시겠습니까?`)) {
+                  return;
+                }
+              }
+
+              try {
+                // 2. Prepare payload merging with Server Data
+                const recordData: MealRecordData = {
+                  user_id: userId,
+                  date: today,
+                  meals: {
+                    ...currentServerData?.meals, // Keep existing server meals
+                    [time]: {
+                      menu: item.menu,
+                      calories: item.nutrition.calories,
+                      carbs: item.nutrition.carbs,
+                      protein: item.nutrition.protein,
+                      fat: item.nutrition.fat
+                    }
+                  },
+                  blood_sugar: currentServerData?.blood_sugar || bloodSugarHistory[today] || {}
+                };
+
+                // 3. Save to Backend
+                await saveMealRecord(recordData);
+
+                // 4. Update Local State
+                handleUpdateMeal(today, time, item);
+                alert(`${time === 'breakfast' ? '아침' : time === 'lunch' ? '점심' : '저녁'} 식단이 안전하게 저장되었습니다!`);
+
+              } catch (e) {
+                console.error("Failed to save from chat", e);
+                alert("저장 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+              }
             }}
           />
         )}
