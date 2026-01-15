@@ -20,4 +20,6 @@ langchain-huggingface
 beautifulsoup4
 unstructured
 langchain-google-genai
+pandas
+msoffcrypto-tool
 

@@ -20,9 +20,12 @@ def ingest_data():
         print(f"🗑️ 기존 DB({persist_directory})를 삭제하고 새로 생성합니다...")
         shutil.rmtree(persist_directory)
 
-    # 1. 임베딩 모델 로드 (로컬 CPU)
-    print("Start Loading Embeddings Model...")
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    # 1. 임베딩 모델 로드 (Mac M3 가속: MPS) - 한국어 특화 모델 적용
+    print("Start Loading Embeddings Model (with M3 MPS Acceleration)...")
+    embeddings = HuggingFaceEmbeddings(
+        model_name="jhgan/ko-sbert-nli",
+        model_kwargs={'device': 'mps'}
+    )
     
     if not os.path.exists(data_directory):
         print(f"⚠️ '{data_directory}' 폴더가 없습니다. 폴더를 생성하고 문서를 넣어주세요.")

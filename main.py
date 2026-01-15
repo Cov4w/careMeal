@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import json
 import base64
@@ -15,7 +15,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
 # from langchain_community.chat_models import ChatOllama # [Ollama 제거]
-from langchain_google_genai import ChatGoogleGenerativeAI # [Gemini 추가]
+from langchain_ollama import ChatOllama
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -91,13 +92,91 @@ def get_db():
     finally:
         db.close()
 
-# 4. LangChain (Gemini & RAG) 설정
-# GOOGLE_API_KEY는 .env 파일에서 자동으로 로드됩니다.
+# 4. LLM 설정 (Cloud Ollama Proxy)
+import requests
+from typing import List, Optional, Any, Dict
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.outputs import ChatResult, ChatGeneration
 
-# 4-1. LLM 초기화 (Gemini 1.5 Flash)
-llm_text = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
-llm_vision = ChatGoogleGenerativeAI(model="gemini-robotics-er-1.5-preview", temperature=0.2)
-llm_agent = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.5)
+# 4. LLM 설정 (Custom Cloud Proxy Wrapper)
+# .env 파일에서 API 키 로드
+fav_api_key_raw = os.getenv("FAV_API_KEY")
+fav_api_key = fav_api_key_raw.strip() if fav_api_key_raw else ""
+ollama_url = "https://fav.nezip.co.kr/ollama"
+
+# [Custom Chat Model] requests를 직접 사용하여 확실하게 헤더 전송
+class CustomOllamaChat(BaseChatModel):
+    base_url: str
+    api_key: str
+    model_name: str = "llama3.1"
+    temperature: float = 0.7
+
+    def _generate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
+        # 메시지 변환 (LangChain -> OpenAI/Ollama Format)
+        formatted_messages = []
+        for msg in messages:
+            role = "user"
+            if isinstance(msg, SystemMessage): role = "system"
+            elif isinstance(msg, AIMessage): role = "assistant"
+            
+            content = msg.content
+            # 이미지 처리 (Vision) - 리스트 형태인 경우
+            if isinstance(content, list):
+                # 텍스트만 추출하거나, 멀티모달 포맷으로 변환해야 함.
+                # 현재 간단한 프록시에서는 텍스트만 보장되므로 텍스트만 추출
+                text_content = ""
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text_content += part.get("text", "")
+                content = text_content if text_content else str(msg.content)
+
+            formatted_messages.append({"role": role, "content": content})
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": self.model_name,
+            "messages": formatted_messages,
+            "stream": False,
+            "options": {
+                "temperature": self.temperature
+            }
+        }
+
+        try:
+            # 실제 호출 (User 예제 코드와 동일 방식)
+            response = requests.post(f"{self.base_url}/api/chat", headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            
+            result_json = response.json()
+            ai_content = result_json["message"]["content"]
+            
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content=ai_content))])
+            
+        except Exception as e:
+            print(f"🚨 Custom LLM Error: {e}")
+            if response is not None:
+                print(f"Server Response: {response.text}")
+            raise e
+
+    @property
+    def _llm_type(self) -> str:
+        return "custom_ollama"
+
+# 4-1. LLM 초기화 (Custom Class 사용)
+if fav_api_key:
+    print(f"🔑 API Key Loaded: {fav_api_key[:4]}*** (Len: {len(fav_api_key)})")
+else:
+    print("🚨 API Key NOT FOUND! Please check .env file.")
+
+llm_text = CustomOllamaChat(base_url=ollama_url, api_key=fav_api_key, model_name="llama3.1", temperature=0.7)
+# Vision 모델은 기존 Gemini 사용 (멀티모달 성능 및 안정성 확보)
+llm_vision = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2)
+llm_agent = CustomOllamaChat(base_url=ollama_url, api_key=fav_api_key, model_name="llama3.1", temperature=0.5)
 
 # 4-2. RAG 시스템 변수 (전역)
 vector_store = None
@@ -108,8 +187,11 @@ async def startup_event():
     global vector_store, retriever
     print("🚀 [Startup] RAG 시스템 초기화 중...")
     
-    # 1. 임베딩 모델 로드 (로컬 CPU)
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    # 1. 임베딩 모델 로드 (Mac M3 가속: MPS) - 한국어 특화 모델 적용
+    embeddings = HuggingFaceEmbeddings(
+        model_name="jhgan/ko-sbert-nli",
+        model_kwargs={'device': 'mps'}
+    )
     
     persist_directory = "./chroma_db"
     
@@ -285,13 +367,12 @@ def get_user_profile_db(user_id: str, db: Session):
         }
     return None
 
-# 헬퍼 함수: 오늘 식단/혈당 가져오기 (AI용)
-def get_today_health_summary(user_id: str, db: Session):
-    today = datetime.now().strftime("%Y-%m-%d")
-    meals = db.query(MealRecord).filter(MealRecord.user_id == user_id, MealRecord.date == today).all()
-    health = db.query(HealthRecord).filter(HealthRecord.user_id == user_id, HealthRecord.date == today).all()
+# 헬퍼 함수: 특정 날짜 식단/혈당 가져오기 (AI용)
+def get_daily_health_summary(user_id: str, date_str: str, db: Session):
+    meals = db.query(MealRecord).filter(MealRecord.user_id == user_id, MealRecord.date == date_str).all()
+    health = db.query(HealthRecord).filter(HealthRecord.user_id == user_id, HealthRecord.date == date_str).all()
     
-    summary = f"[오늘({today}) 건강 기록]\n"
+    summary = f"[{date_str} 건강 기록]\n"
     if meals:
         summary += "- 식단:\n" + "\n".join([f"  * {m.meal_type}: {m.menu} ({m.calories}kcal)" for m in meals]) + "\n"
     else:
@@ -307,6 +388,13 @@ def get_today_health_summary(user_id: str, db: Session):
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     print(f"📩 채팅 요청: {request.user_message}")
+    
+    # 0. 날짜 감지 (간단 구현: '어제' 키워드 체크)
+    target_date = datetime.now()
+    if "어제" in request.user_message:
+        target_date = target_date - timedelta(days=1)
+    
+    target_date_str = target_date.strftime("%Y-%m-%d")
     
     # 1. 유저 정보 조회
     user = db.query(User).filter(User.user_id == request.user_id).first()
@@ -330,47 +418,71 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         except Exception as e:
             print(f"⚠️ 검색 중 오류 발생: {e}")
             
-    # 3. 시스템 프롬프트 구성 (RAG Context 주입 + 구조화 + 초간결화 + 시간/기록 추적)
-    current_time_str = datetime.now().strftime("%Y년 %m월 %d일 %H시 %M분")
+    # 3. 시스템 프롬프트 구성
+    now = datetime.now()
+    current_time_str = now.strftime("%Y년 %m월 %d일 %H시 %M분")
     
+    # 시간대별 식사 구분 로직
+    hour = now.hour
+    minute = now.minute
+    total_minutes = hour * 60 + minute
+    
+    meal_time_context = "간식/야식"
+    if 6 * 60 <= total_minutes < 10 * 60 + 30: # 06:00 ~ 10:30
+        meal_time_context = "아침"
+    elif 10 * 60 + 30 <= total_minutes < 15 * 60: # 10:30 ~ 15:00
+        meal_time_context = "점심"
+    elif 15 * 60 <= total_minutes < 20 * 60: # 15:00 ~ 20:00
+        meal_time_context = "저녁"
+    else:
+        meal_time_context = "야식 (또는 내일 아침)"
+
+    # 타겟 날짜의 기록 가져오기
+    health_summary = get_daily_health_summary(request.user_id, target_date_str, db)
+
     system_prompt = f"""
-    당신은 당뇨 환자를 돕는 전문 의료 AI입니다.
+    당신은 만성 질환 환자를 돕는 전문 의료 AI입니다.
     
     [현재 시각]
     {current_time_str}
     
+    [현재 추천 시간대]
+    👉 **{meal_time_context}** 시간입니다. (식단 추천 시 이 시간대에 맞는 메뉴를 추천하세요.)
+    
     [환자 정보]
     {user_info}
     
-    [오늘의 건강 기록 (자동 추적됨)]
-    {get_today_health_summary(request.user_id, db)}
+    [조회된 건강 기록 ({target_date_str} 기준)]
+    {health_summary}
+    (※ 주의: 위 기록에 '기록 없음'이라고 되어 있으면, 절대로 사용자가 밥을 먹었다고 가정하지 마세요. 없는 내용을 지어내면 해고됩니다.)
     
     [참고 의학 자료 (RAG)]
     {context_text if context_text else "관련 자료 없음 (일반적인 의학 지식으로 답변)."}
     
-    [🔴 핵심 지침: "질문 의도에 따른 유연한 대응"]
-    1. **답변 모드 결정**:
-       - **[A. 전체 분석 모드]**: "식단 어때?", "추천해줘" 요청 -> 아래 **[구조화된 형식]** 사용.
-       - **[B. 즉답 모드]**: "점수 몇 점?", "이거 먹어도 돼?" 질문 -> **결론부터 바로** 말하되, 설명이 필요하면 문단을 나누세요.
-    
-    2. **공통 원칙 [가독성 필수]**: 
-       - 답변이 3줄 이상 길어지면 **무조건 줄바꿈(빈 줄)**을 넣어 문단을 나누세요.
-       - 한 문단은 최대 2문장을 넘기지 마세요. 빽빽한 글은 읽기 힘듭니다.
+    [🔴 답변 원칙 (반드시 준수)]
+    1. **거짓말 금지**: 위 [건강 기록]에 없는 식단을 있는 것처럼 말하지 마세요. 기록이 없으면 "아직 {meal_time_context} 기록이 없네요!"라고 말하고 추천만 하세요.
+    2. **시간대 맞춤 추천**: 
+       - **아침/점심/저녁**: 든든하고 균형 잡힌 식단을 추천하세요.
+       - **야식**: 🚨 **경고부터 하세요.** "늦은 시간 섭취는 혈당을 급격히 높입니다."라고 말하고, 정 배고프면 '오이, 토마토, 따뜻한 차' 같은 가벼운 것만 추천하세요. (치킨/라면 절대 금지)
+    3. **초간결 답변**: 말이 길어지면 안 됩니다. 핵심만 딱 자르세요. (설명 금지, 안부 인사 금지)
+    4. **가독성 (줄바꿈 필수)**: 문장 끝마다 줄바꿈을 하세요. 문단 사이에는 빈 줄을 넣으세요.
 
-    [구조화된 형식 (전체 분석 요청 시에만 사용)]
-    ### 1. 📋 오늘의 기록
-    *   (메뉴 및 칼로리 팩트만 나열)
+    [답변 포맷 예시 - 추천 요청 시]
+    (기록이 없을 때)
+    아직 {meal_time_context} 식사 기록이 없으시네요! 🍽️
+    
+    **추천 {meal_time_context} 메뉴**
+    *   **메뉴**: (시간대에 맞는 구체적 메뉴)
+    *   **이유**: (짧은 이유)
 
-    ### 2. 🩺 종합 분석
-    *   **총평**: (전체적인 균형 평가)
-    *   **꿀팁**: (가장 중요한 조언 1개)
+    (기록이 있을 때)
+    오늘 {meal_time_context}은 잘 챙겨 드셨네요! 👍
     
-    [제약 사항]
-    1. **즉답 모드**에서도 가독성을 위해 **줄바꿈**을 적극 활용하세요.
-    2. 페르소나 말투는 항상 유지하세요.
+    **다음 식사 추천**
+    *   **메뉴**: (다음 끼니 메뉴)
+    *   **팁**: (간단한 조언)
     
-    [페르소나 및 말투 설정]
-    위 짧은 형식 안에서 아래 말투를 녹여내세요.
+    [페르소나]
     {persona}
     """
     
