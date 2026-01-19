@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { BloodSugarEntry } from '@/App';
 import { DailyMealPlan, MealItem } from '@/types';
-import { analyzeFoodImage, fetchMealRecord, saveMealRecord, MealRecordData } from '@/services/api';
+import { analyzeFoodImage, fetchMealRecord, saveMealRecord, estimateNutrition, MealRecordData } from '@/services/api';
 
 interface MealPlan {
   breakfast: string;
@@ -170,6 +170,38 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
 
   const saveData = async () => {
     if (!editingMeal) return;
+
+    // [New Feature] AI Nutrition Estimation Check (Only for Meals)
+    const isMealEdit = !['fasting', 'postBreakfast', 'postLunch', 'postDinner'].includes(editingMeal.type);
+
+    if (isMealEdit && tempMenu.trim()) {
+      // Check if any nutrition field is missing or zero
+      const isMissingNutrition = !tempCal || !tempCarb || !tempProt || !tempFat ||
+        Number(tempCal) === 0 || Number(tempCarb) === 0 || Number(tempProt) === 0 || Number(tempFat) === 0;
+
+      if (isMissingNutrition) {
+        if (window.confirm(`'${tempMenu}'의 영양 정보를 AI가 자동으로 채워드릴까요? 🤖`)) {
+          try {
+            // Show simple loading feedback
+            alert("AI가 영양 성분을 분석 중입니다... 잠시만 기다려주세요.");
+
+            const aiData = await estimateNutrition(tempMenu);
+
+            setTempCal(aiData.calories);
+            setTempCarb(aiData.carbs);
+            setTempProt(aiData.protein);
+            setTempFat(aiData.fat);
+
+            alert("빈칸이 채워졌습니다! 내용을 확인하고 다시 '저장'을 눌러주세요.");
+            return; // Stop saving to let user review
+          } catch (err) {
+            alert("자동 분석에 실패했습니다. 직접 입력해주세요.");
+            // Proceed to save or return? Let's return to avoid saving incomplete data if user wanted AI help
+            return;
+          }
+        }
+      }
+    }
 
     // Update local state first
     let updatedBloodSugar = { ...currentBloodSugar };

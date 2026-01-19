@@ -141,7 +141,8 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
         habitScore: 92,
         prescriptions: ["맞춤형 영양 분석 결과가 도출되었습니다."],
         summary: formData,
-        diseaseDetails: formData.diseaseDetails
+        diseaseDetails: formData.diseaseDetails,
+        userId: formData.name // 이름을 ID로 사용 (실제 로그인처럼 동작)
       };
       setIsAnalyzing(false);
       onComplete(result);
@@ -366,11 +367,10 @@ const HabitSelect = ({ label, options, value, onChange, enlarged = false }: any)
         <button
           key={opt}
           onClick={() => onChange(opt)}
-          className={`flex-1 min-w-[80px] rounded-xl font-bold transition-all border-2 ${enlarged ? 'py-3.5 text-sm' : 'py-2.5 text-[10px]'} ${
-            value === opt
+          className={`flex-1 min-w-[80px] rounded-xl font-bold transition-all border-2 ${enlarged ? 'py-3.5 text-sm' : 'py-2.5 text-[10px]'} ${value === opt
               ? 'border-primary bg-primary/5 text-primary shadow-sm'
               : 'border-gray-100 bg-white text-gray-400 hover:border-gray-200'
-          }`}
+            }`}
         >
           {opt}
         </button>
@@ -396,11 +396,10 @@ const MultiSelect = ({ label, options, values, onChange }: any) => {
           <button
             key={opt}
             onClick={() => toggleOption(opt)}
-            className={`px-4 py-2.5 rounded-xl font-bold transition-all border-2 text-sm ${
-              values.includes(opt)
+            className={`px-4 py-2.5 rounded-xl font-bold transition-all border-2 text-sm ${values.includes(opt)
                 ? 'border-primary bg-primary/5 text-primary shadow-sm'
                 : 'border-gray-100 bg-white text-gray-400 hover:border-gray-200'
-            }`}
+              }`}
           >
             <span className="flex items-center gap-2">
               {opt}

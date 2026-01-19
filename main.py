@@ -10,7 +10,7 @@ import os
 from dotenv import load_dotenv
 
 # --- [NEW] Local AI & Database Stack & RAG ---
-from sqlalchemy import create_engine, Column, String, Integer, JSON, Text, DateTime
+from sqlalchemy import create_engine, Column, String, Integer, JSON, Text, DateTime, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -24,8 +24,16 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 # 환경 변수 로드
 load_dotenv()
 
+from fastapi.staticfiles import StaticFiles
+
 # 1. 앱 생성 및 설정
 app = FastAPI()
+
+# 정적 파일 서빙 설정 (로컬 이미지용)
+# 배포 시 static 폴더만 같이 옮기면 됨
+if not os.path.exists("static"):
+    os.makedirs("static")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,7 +56,11 @@ class User(Base):
     password = Column(String)
     name = Column(String)
     age = Column(Integer)
+    height = Column(Float)
+    weight = Column(Float)
+    gender = Column(String)
     diabetes_type = Column(String)
+    other_conditions = Column(String) # JSON String or Comma-separated
     details = Column(JSON, default={})
     joined_at = Column(DateTime, default=datetime.now)
 
@@ -59,6 +71,26 @@ class ChatLog(Base):
     role = Column(String) # user or ai
     content = Column(Text)
     timestamp = Column(DateTime, default=datetime.now)
+
+class Recipe(Base):
+    __tablename__ = "recipes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)          # 메뉴명
+    description = Column(String)               # 한줄 설명
+    image_url = Column(String)                 # 이미지 URL (없으면 기본 이미지)
+    disease_tag = Column(String)               # 추천 질환 태그 (콤마로 구분, 예: '당뇨,비만')
+    category = Column(String)                  # 카테고리 (한식, 일품 등)
+    diet_type = Column(String)                 # 식단 타입 (고기, 해산물, 비건 등)
+    ingredients = Column(Text)                 # 재료 목록 (검색/유사도 분석용)
+    time_minutes = Column(Integer)             # 조리 시간 (분)
+    
+    # 영양 정보 (1인분 기준)
+    calories = Column(Integer)
+    carbs = Column(Float)
+    protein = Column(Float)
+    fat = Column(Float)
+    sodium = Column(Float)                     # 나트륨 (mg)
 
 class MealRecord(Base):
     __tablename__ = "meal_records"
@@ -121,17 +153,43 @@ class CustomOllamaChat(BaseChatModel):
             elif isinstance(msg, AIMessage): role = "assistant"
             
             content = msg.content
-            # 이미지 처리 (Vision) - 리스트 형태인 경우
+            images = []
+
+            # 이미지 처리 (Vision) - LangChain 멀티모달 포맷 처리
             if isinstance(content, list):
-                # 텍스트만 추출하거나, 멀티모달 포맷으로 변환해야 함.
-                # 현재 간단한 프록시에서는 텍스트만 보장되므로 텍스트만 추출
                 text_content = ""
                 for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        text_content += part.get("text", "")
-                content = text_content if text_content else str(msg.content)
-
-            formatted_messages.append({"role": role, "content": content})
+                    if isinstance(part, str):
+                        text_content += part
+                    elif isinstance(part, dict):
+                        if part.get("type") == "text":
+                            text_content += part.get("text", "")
+                        elif part.get("type") == "image_url":
+                            # base64 이미지 데이터 추출 (data:image/jpeg;base64,...)
+                            # Ollama API는 보통 'images': [base64_string] 형태를 원함
+                            img_url_data = part.get("image_url", {})
+                            # image_url이 dict가 아니라 str일 수도 있음
+                            if isinstance(img_url_data, str):
+                                img_url = img_url_data
+                            else:
+                                img_url = img_url_data.get("url", "")
+                            
+                            if img_url and img_url.startswith("data:image"):
+                                # 헤더 제거하고 순수 Base64만 추출
+                                try:
+                                    base64_str = img_url.split(",")[1]
+                                    images.append(base64_str)
+                                except IndexError:
+                                    pass
+                
+                content = text_content
+            
+            # 메시지 객체 구성
+            message_payload = {"role": role, "content": content}
+            if images:
+                message_payload["images"] = images
+                
+            formatted_messages.append(message_payload)
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -159,7 +217,7 @@ class CustomOllamaChat(BaseChatModel):
             
         except Exception as e:
             print(f"🚨 Custom LLM Error: {e}")
-            if response is not None:
+            if 'response' in locals() and response is not None:
                 print(f"Server Response: {response.text}")
             raise e
 
@@ -173,10 +231,10 @@ if fav_api_key:
 else:
     print("🚨 API Key NOT FOUND! Please check .env file.")
 
-llm_text = CustomOllamaChat(base_url=ollama_url, api_key=fav_api_key, model_name="llama3.1", temperature=0.7)
-# Vision 모델은 기존 Gemini 사용 (멀티모달 성능 및 안정성 확보)
-llm_vision = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2)
-llm_agent = CustomOllamaChat(base_url=ollama_url, api_key=fav_api_key, model_name="llama3.1", temperature=0.5)
+llm_text = CustomOllamaChat(base_url=ollama_url, api_key=fav_api_key, model_name="llama4:latest", temperature=0.7)
+# Vision 모델도 이제 CustomOllamaChat (llama4) 사용
+llm_vision = CustomOllamaChat(base_url=ollama_url, api_key=fav_api_key, model_name="llama4:latest", temperature=0.2)
+llm_agent = CustomOllamaChat(base_url=ollama_url, api_key=fav_api_key, model_name="llama4:latest", temperature=0.5)
 
 # 4-2. RAG 시스템 변수 (전역)
 vector_store = None
@@ -580,3 +638,199 @@ async def analyze_food_endpoint(file: UploadFile = File(...), user_id: str = For
     except Exception as e:
         print(f"🚨 이미지 분석 에러: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+class NutritionEstimateRequest(BaseModel):
+    menu_name: str
+
+@app.post("/estimate-nutrition")
+async def estimate_nutrition_endpoint(request: NutritionEstimateRequest):
+    print(f"🥦 영양 성분 추론 요청: {request.menu_name}")
+    try:
+        prompt = f"""
+        당신은 전문 영양사입니다. 
+        사용자가 입력한 메뉴: "{request.menu_name}"
+        
+        이 메뉴의 1인분 기준 대략적인 영양 성분을 추정해서 JSON 포맷으로 알려주세요.
+        다른 말은 하지 말고, 오직 JSON 데이터만 출력하세요.
+        
+        [출력 형식]
+        {{
+            "calories": 0,
+            "carbs": 0,
+            "protein": 0,
+            "fat": 0
+        }}
+        (단위: kcal, g)
+        """
+        
+        # 텍스트 모델 호출
+        messages = [HumanMessage(content=prompt)]
+        response = llm_text.invoke(messages)
+        content = response.content
+        
+        # JSON 파싱 시도 (LLM이 마크다운 ```json ... ``` 을 붙일 수 있으므로 처리)
+        import re
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            return json.loads(json_str)
+        else:
+            # 실패 시 기본값 리턴
+            return {"calories": 0, "carbs": 0, "protein": 0, "fat": 0}
+
+    except Exception as e:
+        print(f"🚨 추론 에러: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+from sqlalchemy import or_
+
+from typing import List, Optional
+
+# --- Pydantic Models for Response ---
+class RecipeSchema(BaseModel):
+    id: int
+    name: Optional[str] = "이름 없음"
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+    disease_tag: Optional[str] = None
+    category: Optional[str] = None
+    diet_type: Optional[str] = None
+    ingredients: Optional[str] = None
+    time_minutes: Optional[int] = 20
+    calories: Optional[int] = 0
+    carbs: Optional[float] = 0.0
+    protein: Optional[float] = 0.0
+    fat: Optional[float] = 0.0
+    sodium: Optional[float] = 0.0
+
+    class Config:
+        from_attributes = True # ORM 객체를 Pydantic 모델로 읽기 위함 (구 orm_mode)
+
+class RecommendationResponse(BaseModel):
+    user_condition: str
+    recommendations: List[RecipeSchema]
+
+from fastapi.responses import JSONResponse
+import traceback
+
+@app.get("/recipes/recommendations/{user_id}")
+def get_recipe_recommendations(user_id: str, db: Session = Depends(get_db)):
+    try:
+        print(f"🥗 맞춤 레시피 추천 요청: {user_id}")
+        
+        # 1. 사용자 정보 확인
+        user = db.query(User).filter(User.user_id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # [1단계] Rule-Based Filtering (질환 기반 안전 필터링)
+        target_tags = []
+        
+        # 당뇨 및 대사증후군 정밀 분석
+        diabetes_info = user.diabetes_type or ""
+        if "당뇨" in diabetes_info: 
+            target_tags.append("당뇨")
+        
+        # [변경] 대사증후군 관련 데이터 통합 관리 (비만, 고지혈증 -> 대사증후군)
+        if "대사증후군" in diabetes_info:
+            target_tags.append("대사증후군")
+        
+        # 기타 질환
+        other_conds_str = user.other_conditions or "" 
+        if "고혈압" in other_conds_str and "고혈압" not in target_tags: 
+            target_tags.append("고혈압")
+        
+        # 고지혈증 -> 대사증후군으로 대체
+        if "고지혈증" in other_conds_str: 
+            if "대사증후군" not in target_tags:
+                target_tags.append("대사증후군")
+                
+        if "신부전" in other_conds_str: target_tags.append("신부전")
+            
+        if user.weight and user.height:
+             bmi = user.weight / ((user.height / 100) ** 2)
+             # 비만 -> 대사증후군으로 대체
+             if bmi >= 25: 
+                 if "대사증후군" not in target_tags:
+                     target_tags.append("대사증후군")
+        
+        if not target_tags: target_tags.append("일반건강")
+        
+        # 질환 태그 필터링
+        filter_conditions = [Recipe.disease_tag.contains(tag) for tag in target_tags]
+        candidates = db.query(Recipe).filter(or_(*filter_conditions)).all()
+        
+        if not candidates:
+            candidates = db.query(Recipe).filter(Recipe.disease_tag == "일반건강").all()
+
+        # [2단계] Content-Based Scoring (취향 기반 가중치 부여)
+        scored_recipes = []
+        try:
+            # 최근 14일간 식단 기록 조회
+            two_weeks_ago = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
+            
+            recent_records = db.query(MealRecord)\
+                .filter(MealRecord.user_id == user_id, MealRecord.date >= two_weeks_ago)\
+                .all()
+            
+            # 선호 키워드 추출 (직접 menu 컬럼 사용)
+            preference_keywords = {}
+            for record in recent_records:
+                if record.menu:
+                    # 메뉴명에서 키워드 추출
+                    words = str(record.menu).split()
+                    for w in words:
+                        if len(w) > 1:
+                             preference_keywords[w] = preference_keywords.get(w, 0) + 1
+            
+            print(f"🧐 유저 선호 키워드 Top 5: {sorted(preference_keywords.items(), key=lambda x:x[1], reverse=True)[:5]}")
+
+            # 점수 계산
+            for recipe in candidates:
+                score = 0
+                content_text = (str(recipe.name) + " " + str(recipe.ingredients or "")).replace(",", " ")
+                
+                for keyword, count in preference_keywords.items():
+                    if keyword in content_text:
+                        score += (count * 1.5)
+                
+                score += (recipe.id * 0.1)
+                scored_recipes.append({"score": score, "recipe": recipe})
+                
+            # 점수 내림차순 정렬
+            scored_recipes.sort(key=lambda x: x["score"], reverse=True)
+            final_recommendations = [item["recipe"] for item in scored_recipes]
+
+        except Exception as e:
+            print(f"⚠️ 추천 알고리즘 에러 (기본 결과 반환): {e}")
+            final_recommendations = candidates
+
+        # [수동 변환] Pydantic 검증 에러 회피를 위해 dict로 변환
+        final_results_json = []
+        for r in final_recommendations:
+            final_results_json.append({
+                "id": r.id,
+                "name": r.name,
+                "description": r.description or "",
+                "image_url": r.image_url or "",
+                "disease_tag": r.disease_tag or "",
+                "category": r.category or "",
+                "diet_type": r.diet_type or "",
+                "ingredients": r.ingredients or "",
+                "time_minutes": r.time_minutes or 20,
+                "calories": r.calories or 0,
+                "carbs": r.carbs or 0.0,
+                "protein": r.protein or 0.0,
+                "fat": r.fat or 0.0,
+                "sodium": r.sodium or 0.0
+            })
+
+        print(f"✅ 최종 추천 결과({len(final_results_json)}개) 반환")
+        return {
+            "user_condition": ", ".join(target_tags), 
+            "recommendations": final_results_json
+        }
+    except Exception as e:
+        error_msg = f"CRITICAL ERROR: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})

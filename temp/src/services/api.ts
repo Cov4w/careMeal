@@ -138,3 +138,61 @@ export const saveMealRecord = async (data: MealRecordData): Promise<{ status: st
     throw error;
   }
 };
+
+interface NutritionInfo {
+  calories: number;
+  carbs: number;
+  protein: number;
+  fat: number;
+}
+
+export const estimateNutrition = async (menuName: string): Promise<NutritionInfo> => {
+  try {
+    const response = await axios.post<NutritionInfo>(`${API_BASE_URL}/estimate-nutrition`, {
+      menu_name: menuName,
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
+    return response.data;
+  } catch (error) {
+    console.error("Failed to estimate nutrition", error);
+    throw error; // Let the caller handle the fallback or error UI
+  }
+};
+
+// --- Recipe Recommendation API ---
+
+export interface Recipe {
+  id: number;
+  name: string;
+  description: string;
+  image_url: string;
+  disease_tag: string;
+  category: string;
+  diet_type: string;
+  ingredients: string;
+  time_minutes: number;
+  calories: number;
+  carbs: number;
+  protein: number;
+  fat: number;
+  sodium: number;
+}
+
+interface RecommendationResponse {
+  user_condition: string;
+  recommendations: Recipe[];
+}
+
+export const fetchRecommendedRecipes = async (userId: string): Promise<RecommendationResponse> => {
+  try {
+    const response = await axios.get<RecommendationResponse>(`${API_BASE_URL}/recipes/recommendations/${userId}`);
+    return response.data;
+  } catch (error) {
+    console.error("Failed to fetch recommended recipes", error);
+    return { user_condition: '', recommendations: [] }; // Return empty on error to avoid crash
+  }
+};

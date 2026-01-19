@@ -93,6 +93,19 @@ const App: React.FC = () => {
     localStorage.setItem('caremeal_logged_in', 'true');
     localStorage.setItem('caremeal_diagnosis_data', JSON.stringify(data));
     localStorage.setItem('caremeal_selected_conditions', JSON.stringify(data.conditions));
+
+    // [중요] userId 저장 (API 호출용)
+    if (data.userId) {
+      localStorage.setItem('userId', data.userId);
+    } else {
+      // userId가 없으면 이름이라도 ID로 사용 (혹은 임시 ID 생성)
+      const fallbackId = data.name || "guest_" + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem('userId', fallbackId);
+      // data 객체에도 업데이트
+      data.userId = fallbackId;
+      localStorage.setItem('caremeal_diagnosis_data', JSON.stringify(data));
+    }
+
     setIsLoggedIn(true);
   };
 

@@ -3,7 +3,8 @@
 Thumbs.db
 careMeal_dev
 app.py
-
+seed_recipes.py
+WORK_ORDER_RECIPE_PAGE.md
 # Python
 __pycache__/
 *.py[cod]
@@ -26,6 +27,8 @@ caremeal.db
 chroma_db/
 data/*
 !data/.gitkeep
+static/*
+!static/.gitkeep
 
 #temp
 # Logs
