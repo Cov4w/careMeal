@@ -98,6 +98,20 @@ export interface MealRecordData {
       protein: number;
       fat: number;
     };
+    snack?: {
+      menu: string;
+      calories: number;
+      carbs: number;
+      protein: number;
+      fat: number;
+    };
+    lateNightSnack?: {
+      menu: string;
+      calories: number;
+      carbs: number;
+      protein: number;
+      fat: number;
+    };
   };
   blood_sugar?: {
     fasting?: number;
