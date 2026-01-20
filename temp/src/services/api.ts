@@ -174,12 +174,14 @@ export interface Recipe {
   category: string;
   diet_type: string;
   ingredients: string;
+  instructions?: string; // [New]
   time_minutes: number;
   calories: number;
   carbs: number;
   protein: number;
   fat: number;
   sodium: number;
+  is_liked?: boolean; // [New]
 }
 
 interface RecommendationResponse {
@@ -194,5 +196,19 @@ export const fetchRecommendedRecipes = async (userId: string): Promise<Recommend
   } catch (error) {
     console.error("Failed to fetch recommended recipes", error);
     return { user_condition: '', recommendations: [] }; // Return empty on error to avoid crash
+  }
+};
+
+// [New] User Preference API
+export const saveUserPreference = async (userId: string, recipeId: number, preference: 'like' | 'dislike') => {
+  try {
+    await axios.post(`${API_BASE_URL}/user/preference`, {
+      user_id: userId,
+      recipe_id: recipeId,
+      preference: preference
+    });
+    console.log(`Preference saved: ${preference}`);
+  } catch (error) {
+    console.error("Failed to save preference", error);
   }
 };

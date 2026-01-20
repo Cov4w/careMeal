@@ -11,6 +11,7 @@ interface ChatInterfaceProps {
   initialMessage?: string;
   userId: string;
   onNavigate?: (view: any) => void;
+  onRecipeSelect?: (recipeId: number) => void; // [New]
   onSaveMeal: (time: 'breakfast' | 'lunch' | 'dinner', item: MealItem) => void;
 }
 
@@ -21,7 +22,7 @@ const INITIAL_GREETING: Message = {
   timestamp: new Date(),
 };
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, userId, onNavigate, onSaveMeal }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, userId, onNavigate, onRecipeSelect, onSaveMeal }) => {
   useEffect(() => {
     console.log("🐛 ChatInterface mounted. Current UserID prop:", userId);
   }, [userId]);
@@ -219,6 +220,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, u
               message={msg}
               onDelete={() => deleteMessage(msg.id)}
               onNavigate={onNavigate}
+              onRecipeSelect={onRecipeSelect} // [New]
               onSaveMeal={onSaveMeal}
             />
           ))}

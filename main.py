@@ -7,10 +7,12 @@ import uuid
 import json
 import base64
 import os
+import re
+import traceback
 from dotenv import load_dotenv
 
 # --- [NEW] Local AI & Database Stack & RAG ---
-from sqlalchemy import create_engine, Column, String, Integer, JSON, Text, DateTime, Float
+from sqlalchemy import create_engine, Column, String, Integer, JSON, Text, DateTime, Float, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -83,6 +85,7 @@ class Recipe(Base):
     category = Column(String)                  # 카테고리 (한식, 일품 등)
     diet_type = Column(String)                 # 식단 타입 (고기, 해산물, 비건 등)
     ingredients = Column(Text)                 # 재료 목록 (검색/유사도 분석용)
+    instructions = Column(Text)                # [New] 조리 방법 (상세 텍스트)
     time_minutes = Column(Integer)             # 조리 시간 (분)
     
     # 영양 정보 (1인분 기준)
@@ -112,6 +115,14 @@ class HealthRecord(Base):
     date = Column(String, index=True)
     time_slot = Column(String) # fasting, post_morning, post_lunch...
     value = Column(Integer) # 혈당 수치
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    recipe_id = Column(Integer, ForeignKey("recipes.id"))
+    preference = Column(String)  # 'like' or 'dislike'
+    timestamp = Column(DateTime, default=datetime.now)
 
 # DB 테이블 생성
 Base.metadata.create_all(bind=engine)
@@ -431,8 +442,11 @@ def get_daily_health_summary(user_id: str, date_str: str, db: Session):
     health = db.query(HealthRecord).filter(HealthRecord.user_id == user_id, HealthRecord.date == date_str).all()
     
     summary = f"[{date_str} 건강 기록]\n"
+    print(f"🕵️ 건강 기록 조회 ({user_id}, {date_str}): 식단 {len(meals)}개, 혈당 {len(health)}개") # [Log]
     if meals:
-        summary += "- 식단:\n" + "\n".join([f"  * {m.meal_type}: {m.menu} ({m.calories}kcal)" for m in meals]) + "\n"
+        # 영어 meal_type을 한글로 변환하여 LLM에게 제공
+        type_map = {"breakfast": "아침", "lunch": "점심", "dinner": "저녁", "snack": "간식"}
+        summary += "- 식단:\n" + "\n".join([f"  * {type_map.get(m.meal_type, m.meal_type)}: {m.menu} ({m.calories}kcal)" for m in meals]) + "\n"
     else:
         summary += "- 식단: 기록 없음\n"
         
@@ -498,6 +512,18 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     # 타겟 날짜의 기록 가져오기
     health_summary = get_daily_health_summary(request.user_id, target_date_str, db)
 
+    # [NEW] 맞춤 레시피 DB 조회 (상위 3개)
+    rec_list_str = "현재 추천 가능한 DB 레시피가 없습니다."
+    try:
+        rec_data = get_recipe_recommendations(request.user_id, db)
+        if rec_data and 'recommendations' in rec_data:
+            rec_list_str = ""
+            top_recipes = rec_data['recommendations'][:3]
+            for r in top_recipes:
+                rec_list_str += f"- (ID: {r['id']}) {r['name']}: {r['description']} / {r['calories']}kcal\n"
+    except Exception as e:
+        print(f"⚠️ 레시피 로드 실패: {e}")
+
     system_prompt = f"""
     당신은 만성 질환 환자를 돕는 전문 의료 AI입니다.
     
@@ -517,21 +543,32 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     [참고 의학 자료 (RAG)]
     {context_text if context_text else "관련 자료 없음 (일반적인 의학 지식으로 답변)."}
     
+    [🍱 현재 환자 맞춤 DB 레시피 목록 (최우선 추천 대상)]
+    {rec_list_str}
+
     [🔴 답변 원칙 (반드시 준수)]
     1. **거짓말 금지**: 위 [건강 기록]에 없는 식단을 있는 것처럼 말하지 마세요. 기록이 없으면 "아직 {meal_time_context} 기록이 없네요!"라고 말하고 추천만 하세요.
     2. **시간대 맞춤 추천**: 
        - **아침/점심/저녁**: 든든하고 균형 잡힌 식단을 추천하세요.
-       - **야식**: 🚨 **경고부터 하세요.** "늦은 시간 섭취는 혈당을 급격히 높입니다."라고 말하고, 정 배고프면 '오이, 토마토, 따뜻한 차' 같은 가벼운 것만 추천하세요. (치킨/라면 절대 금지)
-    3. **초간결 답변**: 말이 길어지면 안 됩니다. 핵심만 딱 자르세요. (설명 금지, 안부 인사 금지)
-    4. **가독성 (줄바꿈 필수)**: 문장 끝마다 줄바꿈을 하세요. 문단 사이에는 빈 줄을 넣으세요.
+       - **야식**: 🚨 **경고부터 하세요.** "늦은 시간 섭취는 혈당을 급격히 높입니다."라고 말하고, 정 배고프면 '오이, 토마토, 따뜻한 차' 같은 가벼운 것만 추천하세요.
+    3. **DB 레시피 활용**: 식단을 추천할 때는 무조건 위 **[맞춤 DB 레시피 목록]**에 있는 메뉴를 1개 이상 골라서 제안하세요.
+    4. **추천 카드 생성 트리거 (매우 중요)**:
+       - 위 **[맞춤 DB 레시피 목록]**에 있는 메뉴를 추천했다면, 답변의 **맨 마지막 줄**에 `[RECIPE:ID:메뉴명]` 형식을 반드시 붙여주세요.
+       - 띄어쓰기 없이 정확히 쓰세요. 예: `[RECIPE:5:닭가슴살 샐러드]` (O), `[RECIPE: 5 : ...]` (X)
+       - ❌ 주의: `[[CUSTOM_LINK]]` 같은 건 절대 출력하지 마세요. 오직 `[RECIPE:...]`만 쓰세요.
+
+    5. **초간결 답변**: 말이 길어지면 안 됩니다. 핵심만 딱 자르세요. (존댓말 사용)
+    6. **가독성 (줄바꿈 필수)**: 문장 끝마다 줄바꿈을 하세요. 문단 사이에는 빈 줄을 넣으세요.
 
     [답변 포맷 예시 - 추천 요청 시]
     (기록이 없을 때)
     아직 {meal_time_context} 식사 기록이 없으시네요! 🍽️
     
     **추천 {meal_time_context} 메뉴**
-    *   **메뉴**: (시간대에 맞는 구체적 메뉴)
+    *   **메뉴**: (DB 레시피 중 하나)
     *   **이유**: (짧은 이유)
+    
+    [RECIPE:12:추천메뉴명]
 
     (기록이 있을 때)
     오늘 {meal_time_context}은 잘 챙겨 드셨네요! 👍
@@ -554,6 +591,12 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         # Ollama 호출
         response = llm_text.invoke(messages)
         ai_reply = response.content
+        
+        # [Sanitize] 불필요한 태그 제거 및 보정
+        ai_reply = ai_reply.replace("[[CUSTOM_LINK]]", "").replace("[[CUSTOM_DIET_LINK]]", "")
+        # 혹시 모를 공백 제거
+        import re
+        ai_reply = re.sub(r'\[RECIPE:\s*(\d+)\s*:', r'[RECIPE:\1:', ai_reply)
 
         # 5. 로그 저장 (SQLite)
         db.add(ChatLog(user_id=request.user_id, role='user', content=request.user_message))
@@ -682,9 +725,40 @@ async def estimate_nutrition_endpoint(request: NutritionEstimateRequest):
         print(f"🚨 추론 에러: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-from sqlalchemy import or_
+from sqlalchemy import or_, ForeignKey
+from sqlalchemy.orm import relationship
 
 from typing import List, Optional
+
+# --- Preference Request Model ---
+class PreferenceRequest(BaseModel):
+    user_id: str
+    recipe_id: int
+    preference: str  # 'like' or 'dislike'
+    
+@app.post("/user/preference")
+async def save_user_preference(req: PreferenceRequest, db: Session = Depends(get_db)):
+    # 기존 기록 확인 (중복 방지)
+    existing = db.query(UserPreference).filter(
+        UserPreference.user_id == req.user_id, 
+        UserPreference.recipe_id == req.recipe_id
+    ).first()
+    
+    if existing:
+        existing.preference = req.preference
+        existing.timestamp = datetime.now()
+        print(f"🔄 선호도 업데이트: {req.user_id} -> Recipe {req.recipe_id}: {req.preference}")
+    else:
+        new_pref = UserPreference(
+            user_id=req.user_id,
+            recipe_id=req.recipe_id,
+            preference=req.preference
+        )
+        db.add(new_pref)
+        print(f"❤️ 선호도 저장: {req.user_id} -> Recipe {req.recipe_id}: {req.preference}")
+    
+    db.commit()
+    return {"status": "success"}
 
 # --- Pydantic Models for Response ---
 class RecipeSchema(BaseModel):
@@ -696,12 +770,14 @@ class RecipeSchema(BaseModel):
     category: Optional[str] = None
     diet_type: Optional[str] = None
     ingredients: Optional[str] = None
+    instructions: Optional[str] = None         # [New]
     time_minutes: Optional[int] = 20
     calories: Optional[int] = 0
     carbs: Optional[float] = 0.0
     protein: Optional[float] = 0.0
     fat: Optional[float] = 0.0
     sodium: Optional[float] = 0.0
+    is_liked: Optional[bool] = False # [New] 좋아요 여부
 
     class Config:
         from_attributes = True # ORM 객체를 Pydantic 모델로 읽기 위함 (구 orm_mode)
@@ -782,12 +858,27 @@ def get_recipe_recommendations(user_id: str, db: Session = Depends(get_db)):
                     for w in words:
                         if len(w) > 1:
                              preference_keywords[w] = preference_keywords.get(w, 0) + 1
-            
+                    
+            # 2-2. [NEW] 직접적인 좋아요/싫어요 피드백 반영
+            user_prefs = db.query(UserPreference).filter(UserPreference.user_id == user_id).all()
+            liked_recipe_ids = [p.recipe_id for p in user_prefs if p.preference == 'like']
+            disliked_recipe_ids = [p.recipe_id for p in user_prefs if p.preference == 'dislike']
+
             print(f"🧐 유저 선호 키워드 Top 5: {sorted(preference_keywords.items(), key=lambda x:x[1], reverse=True)[:5]}")
+            print(f"❤️ 좋아요한 레시피 ID: {liked_recipe_ids}")
 
             # 점수 계산
             for recipe in candidates:
+                # 싫어요한 레시피는 제외 (또는 점수 대폭 깎기)
+                if recipe.id in disliked_recipe_ids:
+                    continue
+
                 score = 0
+                
+                # 좋아요한 레시피 가산점 (강력함)
+                if recipe.id in liked_recipe_ids:
+                    score += 50 
+
                 content_text = (str(recipe.name) + " " + str(recipe.ingredients or "")).replace(",", " ")
                 
                 for keyword, count in preference_keywords.items():
@@ -817,12 +908,14 @@ def get_recipe_recommendations(user_id: str, db: Session = Depends(get_db)):
                 "category": r.category or "",
                 "diet_type": r.diet_type or "",
                 "ingredients": r.ingredients or "",
+                "instructions": r.instructions or "", # [New]
                 "time_minutes": r.time_minutes or 20,
                 "calories": r.calories or 0,
                 "carbs": r.carbs or 0.0,
                 "protein": r.protein or 0.0,
                 "fat": r.fat or 0.0,
-                "sodium": r.sodium or 0.0
+                "sodium": r.sodium or 0.0,
+                "is_liked": r.id in liked_recipe_ids # [New] 좋아요 여부 매핑
             })
 
         print(f"✅ 최종 추천 결과({len(final_results_json)}개) 반환")

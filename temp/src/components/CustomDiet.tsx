@@ -2,21 +2,22 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Heart, Clock, Flame, ChevronRight, ChevronLeft, Sparkles, Loader2 } from 'lucide-react';
 import { DiagnosisResult } from './Diagnosis';
-import { fetchRecommendedRecipes, Recipe } from '../services/api';
+import { fetchRecommendedRecipes, Recipe, saveUserPreference } from '../services/api';
 
 interface CustomDietProps {
   diagnosisData: DiagnosisResult | null;
-  selectedConditions: string[]; // (참고: API가 주는 user_condition으로 덮어쓸 예정)
+  selectedConditions: string[];
+  onRecipeClick?: (recipe: Recipe) => void; // [New]
 }
 
-const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData }) => {
+const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData, onRecipeClick }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // State
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [userConditions, setUserConditions] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [activePreference, setActivePreference] = useState('고기'); // 기본값
+  const [activePreference, setActivePreference] = useState(''); // 기본값: 전체보기
 
   // Load Data from API
   useEffect(() => {
@@ -50,9 +51,31 @@ const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData }) => {
   // Filtering Logic (프론트엔드에서는 '식단 타입'으로 필터링)
   // activePreference가 '고기', '해산물' 등임. API 데이터의 diet_type과 매칭
   const filteredRecipes = useMemo(() => {
-    if (!activePreference) return recipes;
-    return recipes.filter(recipe => recipe.diet_type === activePreference);
+    let result = recipes;
+    if (activePreference === 'liked') {
+      result = result.filter(r => r.is_liked);
+    } else if (activePreference) {
+      result = result.filter(r => r.diet_type === activePreference || r.category === activePreference);
+    }
+    return result;
   }, [recipes, activePreference]);
+
+  // [New] 좋아요 토글
+  const handleLikeToggle = async (e: React.MouseEvent, recipeId: number) => {
+    e.stopPropagation(); // 카드 클릭 방지
+
+    // 낙관적 업데이트
+    setRecipes(prev => prev.map(r =>
+      r.id === recipeId ? { ...r, is_liked: !r.is_liked } : r
+    ));
+
+    const userId = localStorage.getItem('userId') || 'guest';
+    // 현재 상태의 반대를 보내야 함 (safe way: find recipe first)
+    const target = recipes.find(r => r.id === recipeId);
+    if (target) {
+      saveUserPreference(userId, recipeId, target.is_liked ? 'dislike' : 'like');
+    }
+  };
 
   const preferences = [
     { name: '고기', icon: '🥩', color: 'bg-rose-50', activeColor: 'ring-rose-500 bg-rose-100' },
@@ -163,18 +186,33 @@ const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData }) => {
               )}
             </div>
           </div>
-          <button
-            onClick={() => setActivePreference('')}
-            className="text-xs font-bold text-primary flex items-center bg-primary/5 px-3 py-2 rounded-xl active:scale-95 transition-transform"
-          >
-            전체보기 <ChevronRight size={14} className="ml-1" />
-          </button>
+          <div className="flex space-x-2">
+            <button
+              onClick={() => setActivePreference(activePreference === 'liked' ? '' : 'liked')}
+              className={`text-xs font-bold px-3 py-2 rounded-xl transition-all flex items-center ${activePreference === 'liked'
+                ? 'bg-rose-100 text-rose-500 shadow-sm'
+                : 'bg-gray-100 text-gray-400 hover:bg-rose-50 hover:text-rose-400'
+                }`}
+            >
+              <Heart size={14} className={`mr-1 ${activePreference === 'liked' ? 'fill-current' : ''}`} /> 찜한 메뉴
+            </button>
+            <button
+              onClick={() => setActivePreference('')}
+              className="text-xs font-bold text-primary flex items-center bg-primary/5 px-3 py-2 rounded-xl active:scale-95 transition-transform"
+            >
+              전체보기 <ChevronRight size={14} className="ml-1" />
+            </button>
+          </div>
         </div>
 
         {filteredRecipes.length > 0 ? (
           <div className="grid grid-cols-2 gap-x-6 gap-y-10">
             {filteredRecipes.map((recipe) => (
-              <div key={recipe.id} className="flex flex-col relative group cursor-pointer animate-fadeIn">
+              <div
+                key={recipe.id}
+                className="flex flex-col relative group cursor-pointer animate-fadeIn"
+                onClick={() => onRecipeClick?.(recipe)} // [New]
+              >
                 <div className="relative aspect-square rounded-[40px] overflow-hidden shadow-md mb-5 bg-gray-100">
                   <img
                     src={recipe.image_url}
@@ -185,8 +223,14 @@ const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData }) => {
                     }}
                   />
                   <div className="absolute inset-0 bg-black/5 group-hover:bg-black/0 transition-colors" />
-                  <button className="absolute top-5 right-5 p-2.5 bg-white/90 backdrop-blur-sm rounded-full shadow-lg text-gray-300 hover:text-rose-500 active:scale-90 transition-all">
-                    <Heart size={20} />
+                  <button
+                    onClick={(e) => handleLikeToggle(e, recipe.id)}
+                    className={`absolute top-5 right-5 p-2.5 backdrop-blur-sm rounded-full shadow-lg transition-all active:scale-90 ${recipe.is_liked
+                      ? 'bg-rose-500 text-white'
+                      : 'bg-white/90 text-gray-300 hover:text-rose-500'
+                      }`}
+                  >
+                    <Heart size={20} fill={recipe.is_liked ? "currentColor" : "none"} />
                   </button>
                   {/* 나트륨 경고 뱃지 (예시) */}
                   {/* recipe.sodium이 일정 수준 이상이면 경고 표시를 할 수도 있음 */}

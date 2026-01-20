@@ -8,10 +8,13 @@ import MyPage from '@/components/MyPage';
 import BottomNav from '@/components/BottomNav';
 import Login from '@/components/Login';
 import { DiagnosisResult } from '@/components/Diagnosis';
-import { analyzeFoodImage, fetchMealRecord, saveMealRecord, MealRecordData } from '@/services/api';
+import { analyzeFoodImage, fetchMealRecord, saveMealRecord, MealRecordData, fetchRecommendedRecipes } from '@/services/api'; // [Mod]
 import { DailyMealPlan, MealItem } from './types';
 
-export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage';
+import RecipeDetail from './components/RecipeDetail'; // [New]
+import { Recipe } from '@/services/api'; // [New]
+
+export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage' | 'recipe-detail';
 
 export interface BloodSugarEntry {
   fasting?: number;
@@ -26,6 +29,7 @@ const App: React.FC = () => {
   });
 
   const [currentView, setCurrentView] = useState<ViewState>('home');
+  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null); // [New]
 
   const [diagnosisData, setDiagnosisData] = useState<DiagnosisResult | null>(() => {
     const saved = localStorage.getItem('caremeal_diagnosis_data');
@@ -129,6 +133,26 @@ const App: React.FC = () => {
     setCurrentView(view);
   };
 
+  // [New] 채팅에서 레시피 선택 시 처리
+  const handleRecipeSelectFromChat = async (recipeId: number) => {
+    const userId = diagnosisData?.userId || 'guest';
+    try {
+      // 레시피 데이터가 App에 없으므로 서버에서 가져와서 찾음
+      const data = await fetchRecommendedRecipes(userId);
+      const targetRecipe = data.recommendations.find(r => r.id === recipeId);
+
+      if (targetRecipe) {
+        setSelectedRecipe(targetRecipe);
+        setCurrentView('recipe-detail');
+      } else {
+        alert("해당 레시피 정보를 찾을 수 없습니다.");
+      }
+    } catch (e) {
+      console.error("Failed to fetch recipe detail", e);
+      alert("레시피 정보를 불러오는 중 오류가 발생했습니다.");
+    }
+  };
+
   if (!isLoggedIn) {
     return <Login onLoginComplete={handleLogin} />;
   }
@@ -151,6 +175,7 @@ const App: React.FC = () => {
             initialMessage={initialChatMessage}
             userId={diagnosisData?.userId || 'guest'}
             onNavigate={(view) => setCurrentView(view)}
+            onRecipeSelect={handleRecipeSelectFromChat} // [New]
             onSaveMeal={async (time, item) => {
               const today = new Date().toISOString().split('T')[0];
               const userId = diagnosisData?.userId || 'guest';
@@ -220,6 +245,18 @@ const App: React.FC = () => {
           <CustomDiet
             diagnosisData={diagnosisData}
             selectedConditions={selectedConditions}
+            onRecipeClick={(recipe: Recipe) => {
+              setSelectedRecipe(recipe);
+              setCurrentView('recipe-detail');
+            }}
+          />
+        )}
+
+        {currentView === 'recipe-detail' && selectedRecipe && (
+          <RecipeDetail
+            recipe={selectedRecipe}
+            userId={diagnosisData?.userId || 'guest'}
+            onBack={() => setCurrentView('customDiet')}
           />
         )}
 
