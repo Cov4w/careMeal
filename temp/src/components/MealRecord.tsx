@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import {
-  Plus, Clock, Trash2, Calendar as CalendarIcon, ChevronDown, Droplet, Activity, Camera, Loader2
+  Plus, Clock, Trash2, Calendar as CalendarIcon, ChevronDown, ChevronLeft, ChevronRight, Droplet, Activity, Camera, Loader2
 } from 'lucide-react';
 import { BloodSugarEntry } from '@/App';
 import { DailyMealPlan, MealItem } from '@/types';
@@ -17,17 +17,24 @@ interface MealRecordProps {
   bloodSugarHistory: Record<string, BloodSugarEntry>;
   onUpdateBloodSugar: (date: string, data: BloodSugarEntry) => void;
   mealData: Record<string, DailyMealPlan>;
-  onUpdateMeal: (date: string, time: 'breakfast' | 'lunch' | 'dinner', item: MealItem) => void;
+  onUpdateMeal: (date: string, time: 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'lateNightSnack', item: MealItem) => void;
   userId: string;
 }
 
 const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloodSugar, mealData, onUpdateMeal, userId }) => {
-  const todayStr = new Date().toISOString().split('T')[0];
+  // Use Local Date for consistency
+  const getLocalDateStr = () => {
+    const d = new Date();
+    const offset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - offset).toISOString().split('T')[0];
+  };
+  const todayStr = getLocalDateStr();
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [viewDate, setViewDate] = useState<Date>(new Date());
   const [isMonthView, setIsMonthView] = useState(false);
 
-  const [editingMeal, setEditingMeal] = useState<{ type: 'breakfast' | 'lunch' | 'dinner' | 'fasting' | 'postBreakfast' | 'postLunch' | 'postDinner', date: string } | null>(null);
+  const [editingMeal, setEditingMeal] = useState<{ type: 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'lateNightSnack' | 'fasting' | 'postBreakfast' | 'postLunch' | 'postDinner', date: string } | null>(null);
+  const [showAddMenu, setShowAddMenu] = useState(false);
 
   // Temp states for structured meal data
   const [tempMenu, setTempMenu] = useState('');
@@ -45,11 +52,13 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
     for (let i = -3; i <= 3; i++) {
       const d = new Date(baseDate);
       d.setDate(baseDate.getDate() + i);
+      const offset = d.getTimezoneOffset() * 60000;
+      const localDateStr = new Date(d.getTime() - offset).toISOString().split('T')[0];
       dates.push({
-        full: d.toISOString().split('T')[0],
+        full: localDateStr,
         day: d.getDate(),
         label: ['일', '월', '화', '수', '목', '금', '토'][d.getDay()],
-        isToday: d.toISOString().split('T')[0] === todayStr
+        isToday: localDateStr === todayStr
       });
     }
     return dates;
@@ -64,14 +73,23 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
     for (let i = 0; i < firstDay.getDay(); i++) days.push(null);
     for (let i = 1; i <= lastDay.getDate(); i++) {
       const d = new Date(year, month, i);
+      const offset = d.getTimezoneOffset() * 60000;
+      const localDateStr = new Date(d.getTime() - offset).toISOString().split('T')[0];
       days.push({
-        full: d.toISOString().split('T')[0],
+        full: localDateStr,
         day: i,
-        isToday: d.toISOString().split('T')[0] === todayStr
+        isToday: localDateStr === todayStr
       });
     }
     return days;
+    return days;
   }, [viewDate, todayStr]);
+
+  const changeMonth = (increment: number) => {
+    const newDate = new Date(viewDate);
+    newDate.setMonth(newDate.getMonth() + increment);
+    setViewDate(newDate);
+  };
 
   const currentMeals = mealData[selectedDate] || {};
   const currentBloodSugar = bloodSugarHistory[selectedDate] || {};
@@ -119,6 +137,28 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
                   carbs: data.meals.dinner.carbs,
                   protein: data.meals.dinner.protein,
                   fat: data.meals.dinner.fat,
+                }
+              });
+            }
+            if (data.meals.snack) {
+              onUpdateMeal(selectedDate, 'snack', {
+                menu: data.meals.snack.menu,
+                nutrition: {
+                  calories: data.meals.snack.calories,
+                  carbs: data.meals.snack.carbs,
+                  protein: data.meals.snack.protein,
+                  fat: data.meals.snack.fat,
+                }
+              });
+            }
+            if (data.meals.lateNightSnack) {
+              onUpdateMeal(selectedDate, 'lateNightSnack', {
+                menu: data.meals.lateNightSnack.menu,
+                nutrition: {
+                  calories: data.meals.lateNightSnack.calories,
+                  carbs: data.meals.lateNightSnack.carbs,
+                  protein: data.meals.lateNightSnack.protein,
+                  fat: data.meals.lateNightSnack.fat,
                 }
               });
             }
@@ -228,7 +268,7 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
         ...currentMeals,
         [editingMeal.type]: newItem
       };
-      onUpdateMeal(selectedDate, editingMeal.type as 'breakfast' | 'lunch' | 'dinner', newItem);
+      onUpdateMeal(selectedDate, editingMeal.type as 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'lateNightSnack', newItem);
     }
 
     // Prepare data for backend
@@ -269,6 +309,24 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
         carbs: mealsToSave.dinner.nutrition.carbs,
         protein: mealsToSave.dinner.nutrition.protein,
         fat: mealsToSave.dinner.nutrition.fat,
+      };
+    }
+    if (mealsToSave.snack) {
+      recordData.meals!.snack = {
+        menu: mealsToSave.snack.menu,
+        calories: mealsToSave.snack.nutrition.calories,
+        carbs: mealsToSave.snack.nutrition.carbs,
+        protein: mealsToSave.snack.nutrition.protein,
+        fat: mealsToSave.snack.nutrition.fat,
+      };
+    }
+    if (mealsToSave.lateNightSnack) {
+      recordData.meals!.lateNightSnack = {
+        menu: mealsToSave.lateNightSnack.menu,
+        calories: mealsToSave.lateNightSnack.nutrition.calories,
+        carbs: mealsToSave.lateNightSnack.nutrition.carbs,
+        protein: mealsToSave.lateNightSnack.nutrition.protein,
+        fat: mealsToSave.lateNightSnack.nutrition.fat,
       };
     }
 
@@ -350,12 +408,30 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
       {/* Calendar Section */}
       <div className="px-5 mt-6 mb-6">
         <div className="flex justify-between items-center mb-4">
-          <div onClick={() => setIsMonthView(!isMonthView)} className="flex items-center space-x-1 cursor-pointer">
-            <h2 className="text-base font-black text-gray-800">
-              {isMonthView ? `${viewDate.getFullYear()}년 ${viewDate.getMonth() + 1}월` : '달력 보기'}
-            </h2>
-            <ChevronDown size={16} className={`text-gray-400 transition-transform ${isMonthView ? 'rotate-180' : ''}`} />
-          </div>
+          {isMonthView ? (
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={(e) => { e.stopPropagation(); changeMonth(-1); }}
+                className="p-1 rounded-full hover:bg-gray-100 text-gray-500 transition-colors"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <h2 className="text-base font-black text-gray-800">
+                {viewDate.getFullYear()}년 {viewDate.getMonth() + 1}월
+              </h2>
+              <button
+                onClick={(e) => { e.stopPropagation(); changeMonth(1); }}
+                className="p-1 rounded-full hover:bg-gray-100 text-gray-500 transition-colors"
+              >
+                <ChevronRight size={20} />
+              </button>
+            </div>
+          ) : (
+            <div onClick={() => setIsMonthView(true)} className="flex items-center space-x-1 cursor-pointer">
+              <h2 className="text-base font-black text-gray-800">달력 보기</h2>
+              <ChevronDown size={16} className="text-gray-400" />
+            </div>
+          )}
           <button onClick={() => setIsMonthView(!isMonthView)} className={`p-2 rounded-xl ${isMonthView ? 'bg-primary text-white' : 'bg-white border border-gray-100 shadow-sm'}`}>
             <CalendarIcon size={18} />
           </button>
@@ -412,12 +488,19 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
       </div>
 
       {/* Meal & Post-meal Sugar Logger */}
-      <div className="px-5 space-y-4 mb-8">
+      <div className="px-5 space-y-4 mb-24">
         {[
           { id: 'breakfast', sugarId: 'postBreakfast', label: '아침', time: '08:00', icon: '☀️' },
           { id: 'lunch', sugarId: 'postLunch', label: '점심', time: '12:30', icon: '🌤️' },
-          { id: 'dinner', sugarId: 'postDinner', label: '저녁', time: '19:00', icon: '🌙' }
-        ].map((slot) => (
+          { id: 'dinner', sugarId: 'postDinner', label: '저녁', time: '19:00', icon: '🌙' },
+          { id: 'snack', sugarId: null, label: '간식', time: '15:00', icon: '🍪' },
+          { id: 'lateNightSnack', sugarId: null, label: '야식', time: '21:00', icon: '🍗' }
+        ].filter(slot => {
+          // Always show breakfast, lunch, dinner
+          if (['breakfast', 'lunch', 'dinner'].includes(slot.id)) return true;
+          // Only show snack/lateNightSnack if they have data
+          return !!currentMeals[slot.id as keyof DailyMealPlan];
+        }).map((slot) => (
           <div key={slot.id} className="bg-white p-5 rounded-[32px] border border-gray-100 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
@@ -445,25 +528,66 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
               </button>
             </div>
 
-            <div className="h-px bg-gray-50 w-full" />
+            {slot.sugarId && (
+              <>
+                <div className="h-px bg-gray-50 w-full" />
 
-            <div className="flex items-center justify-between bg-gray-50/50 p-3 rounded-2xl">
-              <div className="flex items-center space-x-2">
-                <Activity size={14} className="text-gray-400" />
-                <span className="text-xs font-bold text-gray-500">식후 2시간 혈당</span>
-              </div>
-              <div className="flex items-center space-x-3">
-                <span className={`text-sm font-black ${currentBloodSugar[slot.sugarId as keyof BloodSugarEntry] ? getSugarStatusColor(currentBloodSugar[slot.sugarId as keyof BloodSugarEntry] as number, 'post') : 'text-gray-300'}`}>
-                  {currentBloodSugar[slot.sugarId as keyof BloodSugarEntry] ? `${currentBloodSugar[slot.sugarId as keyof BloodSugarEntry]} mg/dL` : '-'}
-                </span>
-                <button onClick={() => handleEdit(slot.sugarId, true)} className="text-[10px] font-bold text-primary px-2 py-1 bg-primary/10 rounded-lg">
-                  입력
-                </button>
-              </div>
-            </div>
+                <div className="flex items-center justify-between bg-gray-50/50 p-3 rounded-2xl">
+                  <div className="flex items-center space-x-2">
+                    <Activity size={14} className="text-gray-400" />
+                    <span className="text-xs font-bold text-gray-500">식후 2시간 혈당</span>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <span className={`text-sm font-black ${currentBloodSugar[slot.sugarId as keyof BloodSugarEntry] ? getSugarStatusColor(currentBloodSugar[slot.sugarId as keyof BloodSugarEntry] as number, 'post') : 'text-gray-300'}`}>
+                      {currentBloodSugar[slot.sugarId as keyof BloodSugarEntry] ? `${currentBloodSugar[slot.sugarId as keyof BloodSugarEntry]} mg/dL` : '-'}
+                    </span>
+                    <button onClick={() => handleEdit(slot.sugarId!, true)} className="text-[10px] font-bold text-primary px-2 py-1 bg-primary/10 rounded-lg">
+                      입력
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         ))}
+
+        {/* Add Meal Button (Static) */}
+        <div className="flex justify-center pt-2">
+          <button
+            onClick={() => setShowAddMenu(true)}
+            className="bg-primary text-white px-4 py-2 rounded-full shadow-sm flex items-center gap-1.5 text-sm font-bold transition-transform active:scale-95"
+          >
+            <Plus size={16} />
+            <span className="pr-1">식단 추가</span>
+          </button>
+        </div>
       </div>
+
+
+
+      {/* Add Menu Bottom Sheet */}
+      {showAddMenu && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 backdrop-blur-sm px-4 pb-[env(safe-area-inset-bottom,20px)]" onClick={() => setShowAddMenu(false)}>
+          <div className="w-full max-w-sm bg-white rounded-[32px] p-6 shadow-2xl animate-slideUp space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-gray-900 mb-2">어떤 식단을 추가할까요?</h3>
+            <button onClick={() => { setShowAddMenu(false); handleEdit('snack'); }} className="w-full p-4 bg-orange-50 rounded-2xl flex items-center gap-4 hover:bg-orange-100 transition-colors">
+              <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-2xl shadow-sm">🍪</div>
+              <div className="text-left">
+                <p className="font-bold text-gray-900">간식 추가</p>
+                <p className="text-xs text-gray-500">오후 3:00</p>
+              </div>
+            </button>
+            <button onClick={() => { setShowAddMenu(false); handleEdit('lateNightSnack'); }} className="w-full p-4 bg-indigo-50 rounded-2xl flex items-center gap-4 hover:bg-indigo-100 transition-colors">
+              <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-2xl shadow-sm">🍗</div>
+              <div className="text-left">
+                <p className="font-bold text-gray-900">야식 추가</p>
+                <p className="text-xs text-gray-500">오후 9:00</p>
+              </div>
+            </button>
+            <button onClick={() => setShowAddMenu(false)} className="w-full py-4 text-gray-400 font-bold">닫기</button>
+          </div>
+        </div>
+      )}
 
       {editingMeal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 backdrop-blur-sm px-4 pb-[env(safe-area-inset-bottom,20px)]" onClick={() => setEditingMeal(null)}>
