@@ -1,6 +1,6 @@
 
 import React, { useMemo } from 'react';
-import { ChevronRight, Send, Sparkles, Activity, PieChart, Apple, Droplet, TrendingUp } from 'lucide-react';
+import { ChevronRight, Send, Sparkles, Activity, PieChart, Apple, Droplet, TrendingUp, Zap } from 'lucide-react';
 import { DiagnosisResult } from './Diagnosis';
 import { BloodSugarEntry } from '@/App';
 
@@ -30,7 +30,9 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+
+      const offset = d.getTimezoneOffset() * 60000;
+      const dateStr = new Date(d.getTime() - offset).toISOString().split('T')[0];
       const entry = bloodSugarHistory[dateStr];
 
       dates.push({
@@ -65,6 +67,26 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
     const entry = bloodSugarHistory[sortedDates[0]];
     return entry.postDinner || entry.postLunch || entry.postBreakfast || entry.fasting;
   }, [bloodSugarHistory]);
+
+  // 혈당 통계 계산
+  const sugarStats = useMemo(() => {
+    let allReadings: number[] = [];
+    trendData.forEach(day => {
+      if (day.fasting > 0) allReadings.push(day.fasting);
+      if (day.postBreakfast > 0) allReadings.push(day.postBreakfast);
+      if (day.postLunch > 0) allReadings.push(day.postLunch);
+      if (day.postDinner > 0) allReadings.push(day.postDinner);
+    });
+
+    if (allReadings.length === 0) return { spike: 0, max: 0, avg: 0 };
+
+    const max = Math.max(...allReadings);
+    const avg = Math.round(allReadings.reduce((a, b) => a + b, 0) / allReadings.length);
+    // 스파이크 기준: 200 이상 (임의 기준)
+    const spike = allReadings.filter(v => v >= 200).length;
+
+    return { spike, max, avg };
+  }, [trendData]);
 
   return (
     <div className="flex flex-col h-full bg-[#f8fafc] pb-32 overflow-y-auto no-scrollbar relative">
@@ -296,6 +318,46 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
                     <p className="text-[10px] mt-1">데이터를 입력하면 그래프가 생성됩니다</p>
                   </div>
                 )}
+              </div>
+            </div>
+
+            {/* 혈당 분석 요약 카드 */}
+            <div className="mt-6 grid grid-cols-3 gap-2">
+              {/* 스파이크 */}
+              <div className="bg-gray-50 rounded-2xl p-3 flex flex-col justify-between h-24">
+                <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1"><Zap size={12} />스파이크</span>
+                <div className="mt-1">
+                  <span className="text-xl font-black text-gray-900">{sugarStats.spike}</span>
+                  <span className="text-[10px] text-gray-400 font-bold">/회</span>
+                </div>
+                <div className="flex gap-1 mt-2">
+                  {[...Array(Math.min(3, sugarStats.spike))].map((_, i) => <div key={i} className="w-2 h-2 rounded-full bg-rose-500" />)}
+                  {[...Array(Math.max(0, 3 - sugarStats.spike))].map((_, i) => <div key={i} className="w-2 h-2 rounded-full bg-gray-200" />)}
+                </div>
+              </div>
+
+              {/* 최고혈당 */}
+              <div className="bg-gray-50 rounded-2xl p-3 flex flex-col justify-between h-24">
+                <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1"><TrendingUp size={12} />최고혈당</span>
+                <div className="mt-1">
+                  <span className="text-xl font-black text-gray-900">{sugarStats.max}</span>
+                  <span className="text-[10px] text-gray-400 font-bold">/200</span>
+                </div>
+                <div className="w-full h-1.5 bg-gray-200 rounded-full mt-2 overflow-hidden">
+                  <div className={`h-full rounded-full ${sugarStats.max > 200 ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (sugarStats.max / 250) * 100)}%` }} />
+                </div>
+              </div>
+
+              {/* 평균혈당 */}
+              <div className="bg-gray-50 rounded-2xl p-3 flex flex-col justify-between h-24">
+                <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1"><Activity size={12} />평균혈당</span>
+                <div className="mt-1">
+                  <span className="text-xl font-black text-gray-900">{sugarStats.avg}</span>
+                  <span className="text-[10px] text-gray-400 font-bold">/140</span>
+                </div>
+                <div className="w-full h-1.5 bg-gray-200 rounded-full mt-2 overflow-hidden">
+                  <div className={`h-full rounded-full ${sugarStats.avg > 140 ? 'bg-orange-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (sugarStats.avg / 200) * 100)}%` }} />
+                </div>
               </div>
             </div>
           </div>

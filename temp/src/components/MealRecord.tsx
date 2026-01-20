@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import {
-  Plus, Clock, Trash2, Calendar as CalendarIcon, ChevronDown, Droplet, Activity, Camera, Loader2
+  Plus, Clock, Trash2, Calendar as CalendarIcon, ChevronDown, ChevronLeft, ChevronRight, Droplet, Activity, Camera, Loader2
 } from 'lucide-react';
 import { BloodSugarEntry } from '@/App';
 import { DailyMealPlan, MealItem } from '@/types';
@@ -22,7 +22,13 @@ interface MealRecordProps {
 }
 
 const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloodSugar, mealData, onUpdateMeal, userId }) => {
-  const todayStr = new Date().toISOString().split('T')[0];
+  // Use Local Date for consistency
+  const getLocalDateStr = () => {
+    const d = new Date();
+    const offset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - offset).toISOString().split('T')[0];
+  };
+  const todayStr = getLocalDateStr();
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [viewDate, setViewDate] = useState<Date>(new Date());
   const [isMonthView, setIsMonthView] = useState(false);
@@ -46,11 +52,13 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
     for (let i = -3; i <= 3; i++) {
       const d = new Date(baseDate);
       d.setDate(baseDate.getDate() + i);
+      const offset = d.getTimezoneOffset() * 60000;
+      const localDateStr = new Date(d.getTime() - offset).toISOString().split('T')[0];
       dates.push({
-        full: d.toISOString().split('T')[0],
+        full: localDateStr,
         day: d.getDate(),
         label: ['일', '월', '화', '수', '목', '금', '토'][d.getDay()],
-        isToday: d.toISOString().split('T')[0] === todayStr
+        isToday: localDateStr === todayStr
       });
     }
     return dates;
@@ -65,14 +73,23 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
     for (let i = 0; i < firstDay.getDay(); i++) days.push(null);
     for (let i = 1; i <= lastDay.getDate(); i++) {
       const d = new Date(year, month, i);
+      const offset = d.getTimezoneOffset() * 60000;
+      const localDateStr = new Date(d.getTime() - offset).toISOString().split('T')[0];
       days.push({
-        full: d.toISOString().split('T')[0],
+        full: localDateStr,
         day: i,
-        isToday: d.toISOString().split('T')[0] === todayStr
+        isToday: localDateStr === todayStr
       });
     }
     return days;
+    return days;
   }, [viewDate, todayStr]);
+
+  const changeMonth = (increment: number) => {
+    const newDate = new Date(viewDate);
+    newDate.setMonth(newDate.getMonth() + increment);
+    setViewDate(newDate);
+  };
 
   const currentMeals = mealData[selectedDate] || {};
   const currentBloodSugar = bloodSugarHistory[selectedDate] || {};
@@ -359,12 +376,30 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
       {/* Calendar Section */}
       <div className="px-5 mt-6 mb-6">
         <div className="flex justify-between items-center mb-4">
-          <div onClick={() => setIsMonthView(!isMonthView)} className="flex items-center space-x-1 cursor-pointer">
-            <h2 className="text-base font-black text-gray-800">
-              {isMonthView ? `${viewDate.getFullYear()}년 ${viewDate.getMonth() + 1}월` : '달력 보기'}
-            </h2>
-            <ChevronDown size={16} className={`text-gray-400 transition-transform ${isMonthView ? 'rotate-180' : ''}`} />
-          </div>
+          {isMonthView ? (
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={(e) => { e.stopPropagation(); changeMonth(-1); }}
+                className="p-1 rounded-full hover:bg-gray-100 text-gray-500 transition-colors"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <h2 className="text-base font-black text-gray-800">
+                {viewDate.getFullYear()}년 {viewDate.getMonth() + 1}월
+              </h2>
+              <button
+                onClick={(e) => { e.stopPropagation(); changeMonth(1); }}
+                className="p-1 rounded-full hover:bg-gray-100 text-gray-500 transition-colors"
+              >
+                <ChevronRight size={20} />
+              </button>
+            </div>
+          ) : (
+            <div onClick={() => setIsMonthView(true)} className="flex items-center space-x-1 cursor-pointer">
+              <h2 className="text-base font-black text-gray-800">달력 보기</h2>
+              <ChevronDown size={16} className="text-gray-400" />
+            </div>
+          )}
           <button onClick={() => setIsMonthView(!isMonthView)} className={`p-2 rounded-xl ${isMonthView ? 'bg-primary text-white' : 'bg-white border border-gray-100 shadow-sm'}`}>
             <CalendarIcon size={18} />
           </button>
