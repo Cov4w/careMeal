@@ -63,4 +63,6 @@ export interface DailyMealPlan {
   breakfast?: MealItem;
   lunch?: MealItem;
   dinner?: MealItem;
+  snack?: MealItem;
+  lateNightSnack?: MealItem;
 }

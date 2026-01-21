@@ -11,6 +11,7 @@ interface ChatInterfaceProps {
   initialMessage?: string;
   userId: string;
   onNavigate?: (view: any) => void;
+  onRecipeSelect?: (recipeId: number) => void; // [New]
   onSaveMeal: (time: 'breakfast' | 'lunch' | 'dinner', item: MealItem) => void;
 }
 
@@ -21,7 +22,7 @@ const INITIAL_GREETING: Message = {
   timestamp: new Date(),
 };
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, userId, onNavigate, onSaveMeal }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, userId, onNavigate, onRecipeSelect, onSaveMeal }) => {
   useEffect(() => {
     console.log("🐛 ChatInterface mounted. Current UserID prop:", userId);
   }, [userId]);
@@ -219,6 +220,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, u
               message={msg}
               onDelete={() => deleteMessage(msg.id)}
               onNavigate={onNavigate}
+              onRecipeSelect={onRecipeSelect} // [New]
               onSaveMeal={onSaveMeal}
             />
           ))}
@@ -285,51 +287,67 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, u
 
       {/* Slide-out History with Safe Areas */}
       <div
-        className={`fixed inset-0 z-[60] transition-opacity duration-300 ${isHistoryOpen ? 'opacity-100 visible' : 'opacity-0 invisible'}`}
-        onClick={() => setIsHistoryOpen(false)}
+        className={`absolute inset-0 z-[60] transition-all duration-300 ease-in-out ${isHistoryOpen ? 'visible' : 'invisible pointer-events-none'}`}
       >
-        <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+        {/* Backdrop */}
         <div
-          className={`absolute right-0 top-0 bottom-0 w-[85%] max-w-sm bg-white shadow-2xl transition-transform duration-300 ease-out flex flex-col ${isHistoryOpen ? 'translate-x-0' : 'translate-x-full'}`}
+          className={`absolute inset-0 bg-black/20 backdrop-blur-[2px] transition-opacity duration-300 ${isHistoryOpen ? 'opacity-100' : 'opacity-0'}`}
+          onClick={() => setIsHistoryOpen(false)}
+        />
+
+        {/* Sidebar Content */}
+        <div
+          className={`absolute right-0 top-0 bottom-0 w-[80%] max-w-[300px] bg-white shadow-2xl transition-transform duration-300 cubic-bezier(0.16, 1, 0.3, 1) flex flex-col ${isHistoryOpen ? 'translate-x-0' : 'translate-x-full'}`}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="pt-[calc(env(safe-area-inset-top,12px)+20px)] p-5 border-b border-gray-100 flex items-center justify-between bg-white">
-            <div className="flex items-center space-x-2">
-              <History size={20} className="text-primary" />
-              <h2 className="font-bold text-gray-900">지난 대화 기록</h2>
+          <div className="pt-[calc(env(safe-area-inset-top,12px)+24px)] px-6 pb-6 border-b border-gray-50 flex items-center justify-between bg-white relative z-10">
+            <div>
+              <h2 className="text-xl font-black text-gray-900 tracking-tight">대화 기록</h2>
+              <p className="text-xs text-gray-400 mt-0.5">지난 상담 내용을 확인하세요</p>
             </div>
-            <button onClick={() => setIsHistoryOpen(false)} className="p-2 active:bg-gray-100 rounded-full">
-              <X size={20} />
+            <button
+              onClick={() => setIsHistoryOpen(false)}
+              className="p-2 -mr-2 text-gray-400 hover:text-gray-900 active:bg-gray-100 rounded-full transition-colors"
+            >
+              <X size={24} />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+
+          <div className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar bg-gray-50/30">
             {messages.length <= 1 ? (
-              <div className="flex flex-col items-center justify-center h-full text-gray-400 opacity-30">
-                <MessageSquare size={48} />
-                <p className="text-sm mt-2">저장된 대화가 없습니다.</p>
+              <div className="flex flex-col items-center justify-center h-[60%] text-gray-300 space-y-4">
+                <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center">
+                  <MessageSquare size={32} className="opacity-50" />
+                </div>
+                <p className="text-sm font-medium">저장된 대화가 없습니다</p>
               </div>
             ) : (
               messages.filter(m => m.sender === 'user').map((m) => (
-                <div key={m.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 active:border-primary/30 transition-all relative">
-                  <p className="text-[10px] font-bold text-gray-400 mb-1">{m.timestamp.toLocaleDateString()}</p>
-                  <p className="text-sm text-gray-700 line-clamp-2">{m.text}</p>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); deleteMessage(m.id); }}
-                    className="absolute top-4 right-4 text-gray-300 active:text-rose-500"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                <div key={m.id} className="group bg-white p-4 rounded-[20px] shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100/50 hover:border-primary/20 hover:shadow-md transition-all relative">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-bold text-gray-400 bg-gray-50 px-2 py-1 rounded-lg">
+                      {m.timestamp.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })} · {m.timestamp.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteMessage(m.id); }}
+                      className="text-gray-300 hover:text-rose-500 transition-colors p-1"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  <p className="text-sm text-gray-700 font-medium line-clamp-2 leading-relaxed pl-1">{m.text}</p>
                 </div>
               ))
             )}
           </div>
-          <div className="p-5 pb-[calc(env(safe-area-inset-bottom,20px)+20px)] border-t border-gray-100 bg-gray-50/50">
+
+          <div className="p-5 pb-[calc(env(safe-area-inset-bottom,20px)+20px)] bg-white border-t border-gray-50">
             <button
               onClick={handleClearAll}
-              className="w-full py-4 flex items-center justify-center space-x-2 bg-white text-rose-500 border border-rose-100 rounded-2xl font-bold text-sm shadow-sm active:bg-rose-50"
+              className="w-full py-4 flex items-center justify-center space-x-2 bg-rose-50 text-rose-500 rounded-2xl font-bold text-sm hover:bg-rose-100 active:scale-[0.98] transition-all"
             >
               <Trash2 size={18} />
-              <span>전체 기록 비우기</span>
+              <span>기록 전체 삭제</span>
             </button>
           </div>
         </div>

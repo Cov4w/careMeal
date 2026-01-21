@@ -8,10 +8,11 @@ interface MessageBubbleProps {
   message: Message;
   onDelete?: () => void;
   onNavigate?: (view: any) => void;
+  onRecipeSelect?: (recipeId: number) => void; // [New]
   onSaveMeal?: (time: 'breakfast' | 'lunch' | 'dinner', item: MealItem) => void;
 }
 
-const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onDelete, onNavigate, onSaveMeal }) => {
+const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onDelete, onNavigate, onRecipeSelect, onSaveMeal }) => {
   const isUser = message.sender === 'user';
   const hasDietLink = message.text.includes('[[CUSTOM_DIET_LINK]]');
   const cleanText = message.text.replace('[[CUSTOM_DIET_LINK]]', '').trim();
@@ -38,7 +39,16 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onDelete, onNavi
     return null;
   };
 
-  const displayText = cleanText.replace(/###JSON_START###[\s\S]*?###JSON_END###/, '').trim();
+  // Helper to extract RECIPE tag
+  const recipeMatch = message.text.match(/\[RECIPE:(\d+):(.+?)\]/);
+  const recipeId = recipeMatch ? parseInt(recipeMatch[1]) : null;
+  const recipeName = recipeMatch ? recipeMatch[2] : null;
+
+  // Remove tags from display text
+  let displayText = cleanText.replace(/###JSON_START###[\s\S]*?###JSON_END###/, '');
+  displayText = displayText.replace(/\[RECIPE:\d+:.+?\]/, ''); // Remove Recipe tag from bubble text
+  displayText = displayText.trim();
+
   const [savedTime, setSavedTime] = React.useState<string | null>(null);
 
   const handleSaveMeal = (time: 'breakfast' | 'lunch' | 'dinner') => {
@@ -135,6 +145,25 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onDelete, onNavi
                 <p className="text-xs text-gray-400">AI가 추천하는 오늘의 메뉴 확인하기</p>
               </div>
               <ChevronRight size={18} className="text-gray-300 group-hover/card:text-primary" />
+            </button>
+          )}
+
+          {/* Recipe Recommendation Card */}
+          {!isUser && recipeId && (
+            <button
+              onClick={() => onRecipeSelect?.(recipeId)}
+              className="mt-3 w-full bg-white border border-primary/20 rounded-xl p-3 flex items-center justify-between shadow-sm hover:bg-primary/5 hover:border-primary/50 transition-all group/card text-left"
+            >
+              <div className="flex items-center">
+                <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center text-orange-500 mr-3">
+                  <Utensils size={20} />
+                </div>
+                <div>
+                  <p className="text-xs text-primary font-bold">맞춤 식단 추천</p>
+                  <p className="text-sm font-bold text-gray-800">{recipeName} 보러가기</p>
+                </div>
+              </div>
+              <ChevronRight size={18} className="text-gray-400 group-hover/card:text-primary" />
             </button>
           )}
 

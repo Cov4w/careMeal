@@ -71,3 +71,158 @@ export const analyzeFoodImage = async (userId: string, imageFile: File): Promise
     throw error;
   }
 };
+
+// Meal record types
+export interface MealRecordData {
+  user_id: string;
+  date: string;
+  meals?: {
+    breakfast?: {
+      menu: string;
+      calories: number;
+      carbs: number;
+      protein: number;
+      fat: number;
+    };
+    lunch?: {
+      menu: string;
+      calories: number;
+      carbs: number;
+      protein: number;
+      fat: number;
+    };
+    dinner?: {
+      menu: string;
+      calories: number;
+      carbs: number;
+      protein: number;
+      fat: number;
+    };
+    snack?: {
+      menu: string;
+      calories: number;
+      carbs: number;
+      protein: number;
+      fat: number;
+    };
+    lateNightSnack?: {
+      menu: string;
+      calories: number;
+      carbs: number;
+      protein: number;
+      fat: number;
+    };
+  };
+  blood_sugar?: {
+    fasting?: number;
+    postBreakfast?: number;
+    postLunch?: number;
+    postDinner?: number;
+  };
+}
+
+export const fetchMealRecord = async (userId: string, date: string): Promise<MealRecordData | null> => {
+  try {
+    const response = await axios.get<MealRecordData>(`${API_BASE_URL}/records/${userId}`, {
+      params: { date },
+      timeout: 5000,
+    });
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      // No data for this date, return null
+      return null;
+    }
+    console.error("Failed to fetch meal record", error);
+    throw error;
+  }
+};
+
+export const saveMealRecord = async (data: MealRecordData): Promise<{ status: string }> => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}/records`, data, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      timeout: 5000,
+    });
+    return response.data;
+  } catch (error) {
+    console.error("Failed to save meal record", error);
+    throw error;
+  }
+};
+
+interface NutritionInfo {
+  calories: number;
+  carbs: number;
+  protein: number;
+  fat: number;
+}
+
+export const estimateNutrition = async (menuName: string): Promise<NutritionInfo> => {
+  try {
+    const response = await axios.post<NutritionInfo>(`${API_BASE_URL}/estimate-nutrition`, {
+      menu_name: menuName,
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      timeout: 15000,
+    });
+    return response.data;
+  } catch (error) {
+    console.error("Failed to estimate nutrition", error);
+    throw error; // Let the caller handle the fallback or error UI
+  }
+};
+
+// --- Recipe Recommendation API ---
+
+export interface Recipe {
+  id: number;
+  name: string;
+  description: string;
+  image_url: string;
+  disease_tag: string;
+  category: string;
+  diet_type: string;
+  ingredients: string;
+  instructions?: string; // [New]
+  time_minutes: number;
+  calories: number;
+  carbs: number;
+  protein: number;
+  fat: number;
+  sodium: number;
+  is_liked?: boolean; // [New]
+}
+
+interface RecommendationResponse {
+  user_condition: string;
+  recommendations: Recipe[];
+}
+
+export const fetchRecommendedRecipes = async (userId: string): Promise<RecommendationResponse> => {
+  try {
+    const response = await axios.get<RecommendationResponse>(`${API_BASE_URL}/recipes/recommendations/${userId}`);
+    return response.data;
+  } catch (error) {
+    console.error("Failed to fetch recommended recipes", error);
+    return { user_condition: '', recommendations: [] }; // Return empty on error to avoid crash
+  }
+};
+
+// [New] User Preference API
+export const saveUserPreference = async (userId: string, recipeId: number, preference: 'like' | 'dislike') => {
+  try {
+    await axios.post(`${API_BASE_URL}/user/preference`, {
+      user_id: userId,
+      recipe_id: recipeId,
+      preference: preference
+    });
+    console.log(`Preference saved: ${preference}`);
+  } catch (error) {
+    console.error("Failed to save preference", error);
+  }
+};

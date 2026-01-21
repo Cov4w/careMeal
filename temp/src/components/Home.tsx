@@ -1,6 +1,6 @@
 
 import React, { useMemo } from 'react';
-import { ChevronRight, Send, Sparkles, Activity, PieChart, Apple, Droplet, TrendingUp } from 'lucide-react';
+import { ChevronRight, Send, Sparkles, Activity, PieChart, Apple, Droplet, TrendingUp, Zap } from 'lucide-react';
 import { DiagnosisResult } from './Diagnosis';
 import { BloodSugarEntry } from '@/App';
 
@@ -22,47 +22,71 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
 
   const isDiabetic = diagnosisData?.conditions?.includes('당뇨병');
 
-  // 최근 7일간의 혈당 데이터 추출 및 그래프 경로 생성
+
+
+  // 최근 7일간의 혈당 데이터 추출 (4가지 타입 모두 포함)
   const trendData = useMemo(() => {
     const dates = [];
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+
+      const offset = d.getTimezoneOffset() * 60000;
+      const dateStr = new Date(d.getTime() - offset).toISOString().split('T')[0];
       const entry = bloodSugarHistory[dateStr];
-      
-      // 공복 혈당 우선, 없으면 평균
-      let val = 0;
-      if (entry) {
-        const vals = [entry.fasting, entry.postBreakfast, entry.postLunch, entry.postDinner].filter(v => v !== undefined) as number[];
-        val = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-      }
-      dates.push({ date: dateStr, value: val });
+
+      dates.push({
+        date: dateStr,
+        day: d.getDate(),
+        fasting: entry?.fasting || 0,
+        postBreakfast: entry?.postBreakfast || 0,
+        postLunch: entry?.postLunch || 0,
+        postDinner: entry?.postDinner || 0,
+      });
     }
     return dates;
   }, [bloodSugarHistory]);
 
-  const chartPath = useMemo(() => {
-    if (trendData.every(d => d.value === 0)) return "";
-    const width = 300;
-    const height = 100;
-    const maxVal = Math.max(...trendData.map(d => d.value), 200);
-    const minVal = Math.min(...trendData.map(d => d.value).filter(v => v > 0), 70);
-    const range = maxVal - minVal || 1;
+  // 혈당 타입별 색상 정의
+  const bloodSugarColors = {
+    fasting: '#ec4899',      // 공복 - 핑크
+    postBreakfast: '#f59e0b', // 아침 - 노랑
+    postLunch: '#0ea5e9',     // 점심 - 하늘색
+    postDinner: '#8b5cf6',    // 저녁 - 보라
+  };
 
-    return trendData.map((d, i) => {
-      const x = (i / 6) * width;
-      const y = d.value === 0 ? height : height - ((d.value - minVal) / range) * height;
-      return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
-    }).join(' ');
-  }, [trendData]);
+  // Y좌표 계산 (동적 스케일)
+  const getY = (value: number, height: number, minScale = 40, maxScale = 320) => {
+    if (value === 0) return height;
+    return height - ((value - minScale) / (maxScale - minScale)) * height;
+  };
 
   const latestSugar = useMemo(() => {
     const sortedDates = Object.keys(bloodSugarHistory).sort().reverse();
     if (sortedDates.length === 0) return null;
     const entry = bloodSugarHistory[sortedDates[0]];
-    return entry.fasting || entry.postBreakfast || entry.postLunch || entry.postDinner;
+    return entry.postDinner || entry.postLunch || entry.postBreakfast || entry.fasting;
   }, [bloodSugarHistory]);
+
+  // 혈당 통계 계산
+  const sugarStats = useMemo(() => {
+    let allReadings: number[] = [];
+    trendData.forEach(day => {
+      if (day.fasting > 0) allReadings.push(day.fasting);
+      if (day.postBreakfast > 0) allReadings.push(day.postBreakfast);
+      if (day.postLunch > 0) allReadings.push(day.postLunch);
+      if (day.postDinner > 0) allReadings.push(day.postDinner);
+    });
+
+    if (allReadings.length === 0) return { spike: 0, max: 0, avg: 0 };
+
+    const max = Math.max(...allReadings);
+    const avg = Math.round(allReadings.reduce((a, b) => a + b, 0) / allReadings.length);
+    // 스파이크 기준: 200 이상 (임의 기준)
+    const spike = allReadings.filter(v => v >= 200).length;
+
+    return { spike, max, avg };
+  }, [trendData]);
 
   return (
     <div className="flex flex-col h-full bg-[#f8fafc] pb-32 overflow-y-auto no-scrollbar relative">
@@ -73,7 +97,7 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
       {/* Chatbot Input - Moved to Top */}
       <div className="px-5 mt-4 mb-4">
         <form onSubmit={handleQuickChatSend} className="w-full h-14 border border-primary/30 rounded-full flex items-center px-4 justify-between bg-white shadow-sm border-2 focus-within:border-primary transition-all">
-          <input 
+          <input
             type="text"
             value={quickChatMessage}
             onChange={(e) => setQuickChatMessage(e.target.value)}
@@ -93,7 +117,7 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
             {diagnosisData?.name || '환자'}님, 안녕하세요! 👨‍⚕️
           </h2>
           <p className="text-sm text-gray-400">오늘도 건강한 식사 하셨나요?</p>
-          
+
           <div className="mt-6 flex items-center justify-between bg-primary/5 p-4 rounded-2xl border border-primary/10">
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 bg-primary/20 rounded-full flex items-center justify-center text-primary">
@@ -104,7 +128,7 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
                 <p className="text-lg font-black text-gray-900">{diagnosisData?.habitScore || 0}점</p>
               </div>
             </div>
-            <button onClick={() => onTabChange('mypage')} className="text-xs font-bold text-primary flex items-center">리포트 보기 <ChevronRight size={14}/></button>
+            <button onClick={() => onTabChange('mypage-report')} className="text-xs font-bold text-primary flex items-center">리포트 보기 <ChevronRight size={14} /></button>
           </div>
         </div>
       </div>
@@ -112,61 +136,236 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
       {/* Diabetic Special: Blood Sugar Trend */}
       {isDiabetic && (
         <div className="px-5 mb-8">
-          <div className="bg-gray-900 p-6 rounded-[32px] text-white shadow-xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-6 opacity-10">
-              <Activity size={80} />
-            </div>
-            
-            <div className="flex items-center justify-between mb-6">
+          <div
+            className="bg-white p-5 rounded-[24px] shadow-sm border border-gray-100"
+          >
+            {/* 헤더 */}
+            <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-rose-500 rounded-xl flex items-center justify-center">
-                  <Droplet size={18} />
+                <div className="w-8 h-8 bg-rose-100 rounded-xl flex items-center justify-center">
+                  <Droplet size={18} className="text-rose-500" />
                 </div>
-                <h3 className="font-black text-lg">혈당 변화 추이</h3>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] text-white/40 font-bold uppercase">최근 기록</p>
-                <p className="text-sm font-black text-rose-400">{latestSugar ? `${latestSugar} mg/dL` : '기록 없음'}</p>
+                <h3 className="font-bold text-gray-900">혈당 변화 추이</h3>
               </div>
             </div>
 
-            <div className="relative h-24 w-full mb-4 px-2">
-              {chartPath ? (
-                <svg viewBox="0 0 300 100" className="w-full h-full overflow-visible">
-                  <path 
-                    d={chartPath} 
-                    fill="none" 
-                    stroke="rgba(244, 63, 94, 0.8)" 
-                    strokeWidth="4" 
-                    strokeLinecap="round" 
-                    strokeLinejoin="round"
-                    className="animate-fadeIn"
-                  />
-                  {trendData.map((d, i) => d.value > 0 && (
-                    <circle 
-                      key={i} 
-                      cx={(i / 6) * 300} 
-                      cy={100 - ((d.value - Math.min(...trendData.map(v => v.value).filter(x => x > 0))) / (Math.max(...trendData.map(v => v.value), 200) - Math.min(...trendData.map(v => v.value).filter(x => x > 0)) || 1)) * 100} 
-                      r="4" 
-                      fill="#f43f5e" 
+            {/* 범례 */}
+            <div className="flex flex-wrap gap-3 mb-4 text-[10px] font-bold">
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: bloodSugarColors.fasting }}></span>
+                <span className="text-gray-500">공복</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: bloodSugarColors.postBreakfast }}></span>
+                <span className="text-gray-500">아침</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: bloodSugarColors.postLunch }}></span>
+                <span className="text-gray-500">점심</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: bloodSugarColors.postDinner }}></span>
+                <span className="text-gray-500">저녁</span>
+              </div>
+            </div>
+
+            {/* 그래프 영역 */}
+            <div className="flex">
+              {/* Y축 라벨 (300, 180, 140, 70, 40) */}
+              <div className="flex flex-col justify-between text-[9px] text-gray-400 font-medium pr-2" style={{ height: '220px' }}>
+                <span>320</span>
+                <span>280</span>
+                <span>240</span>
+                <span>200</span>
+                <span>160</span>
+                <span>120</span>
+                <span>80</span>
+                <span>40</span>
+              </div>
+
+              {/* 그래프 */}
+              <div className="flex-1 relative" style={{ height: '220px' }}>
+                <svg viewBox="0 0 260 220" className="w-full h-full" style={{ overflow: 'visible' }}>
+                  {/* 배경 그리드 - 가로선 (8개: 320, 280, 240, 200, 160, 120, 80, 40) */}
+                  {[320, 280, 240, 200, 160, 120, 80, 40].map((val, i) => {
+                    const y = 220 - ((val - 40) / (320 - 40)) * 220;
+                    return <line key={`grid-h-${i}`} x1="10" y1={y} x2="250" y2={y} stroke="#f0f0f0" strokeWidth="1" />;
+                  })}
+                  {/* 배경 그리드 - 세로선 */}
+                  {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+                    <line key={`grid-v-${i}`} x1={10 + (i / 6) * 240} y1="0" x2={10 + (i / 6) * 240} y2="220" stroke="#f0f0f0" strokeWidth="1" />
+                  ))}
+
+                  {/* 공복 혈당 라인 */}
+                  {trendData.filter(d => d.fasting > 0).length > 1 && (
+                    <path
+                      d={trendData.map((d, i) => {
+                        if (d.fasting === 0) return '';
+                        const x = 10 + (i / 6) * 240;
+                        const y = getY(d.fasting, 220);
+                        const prevValid = trendData.slice(0, i).filter(p => p.fasting > 0);
+                        return prevValid.length === 0 ? `M ${x} ${y}` : `L ${x} ${y}`;
+                      }).join(' ')}
+                      fill="none"
+                      stroke={bloodSugarColors.fasting}
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                     />
+                  )}
+                  {/* 아침 식후 라인 */}
+                  {trendData.filter(d => d.postBreakfast > 0).length > 1 && (
+                    <path
+                      d={trendData.map((d, i) => {
+                        if (d.postBreakfast === 0) return '';
+                        const x = 10 + (i / 6) * 240;
+                        const y = getY(d.postBreakfast, 220);
+                        const prevValid = trendData.slice(0, i).filter(p => p.postBreakfast > 0);
+                        return prevValid.length === 0 ? `M ${x} ${y}` : `L ${x} ${y}`;
+                      }).join(' ')}
+                      fill="none"
+                      stroke={bloodSugarColors.postBreakfast}
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+                  {/* 점심 식후 라인 */}
+                  {trendData.filter(d => d.postLunch > 0).length > 1 && (
+                    <path
+                      d={trendData.map((d, i) => {
+                        if (d.postLunch === 0) return '';
+                        const x = 10 + (i / 6) * 240;
+                        const y = getY(d.postLunch, 220);
+                        const prevValid = trendData.slice(0, i).filter(p => p.postLunch > 0);
+                        return prevValid.length === 0 ? `M ${x} ${y}` : `L ${x} ${y}`;
+                      }).join(' ')}
+                      fill="none"
+                      stroke={bloodSugarColors.postLunch}
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+                  {/* 저녁 식후 라인 */}
+                  {trendData.filter(d => d.postDinner > 0).length > 1 && (
+                    <path
+                      d={trendData.map((d, i) => {
+                        if (d.postDinner === 0) return '';
+                        const x = 10 + (i / 6) * 240;
+                        const y = getY(d.postDinner, 220);
+                        const prevValid = trendData.slice(0, i).filter(p => p.postDinner > 0);
+                        return prevValid.length === 0 ? `M ${x} ${y}` : `L ${x} ${y}`;
+                      }).join(' ')}
+                      fill="none"
+                      stroke={bloodSugarColors.postDinner}
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+
+                  {/* 데이터 포인트들 */}
+                  {trendData.map((d, i) => (
+                    <React.Fragment key={i}>
+                      {d.fasting > 0 && (
+                        <>
+                          <circle cx={10 + (i / 6) * 240} cy={getY(d.fasting, 220)} r="4" fill={bloodSugarColors.fasting} />
+                          {i === 6 && <text x={10 + (i / 6) * 240 + 8} y={getY(d.fasting, 220) + 3} textAnchor="start" fontSize="8" fill={bloodSugarColors.fasting} fontWeight="bold">{d.fasting}</text>}
+                        </>
+                      )}
+                      {d.postBreakfast > 0 && (
+                        <>
+                          <circle cx={10 + (i / 6) * 240} cy={getY(d.postBreakfast, 220)} r="4" fill={bloodSugarColors.postBreakfast} />
+                          {i === 6 && <text x={10 + (i / 6) * 240 + 8} y={getY(d.postBreakfast, 220) + 3} textAnchor="start" fontSize="8" fill={bloodSugarColors.postBreakfast} fontWeight="bold">{d.postBreakfast}</text>}
+                        </>
+                      )}
+                      {d.postLunch > 0 && (
+                        <>
+                          <circle cx={10 + (i / 6) * 240} cy={getY(d.postLunch, 220)} r="4" fill={bloodSugarColors.postLunch} />
+                          {i === 6 && <text x={10 + (i / 6) * 240 + 8} y={getY(d.postLunch, 220) + 3} textAnchor="start" fontSize="8" fill={bloodSugarColors.postLunch} fontWeight="bold">{d.postLunch}</text>}
+                        </>
+                      )}
+                      {d.postDinner > 0 && (
+                        <>
+                          <circle cx={10 + (i / 6) * 240} cy={getY(d.postDinner, 220)} r="4" fill={bloodSugarColors.postDinner} />
+                          {i === 6 && <text x={10 + (i / 6) * 240 + 8} y={getY(d.postDinner, 220) + 3} textAnchor="start" fontSize="8" fill={bloodSugarColors.postDinner} fontWeight="bold">{d.postDinner}</text>}
+                        </>
+                      )}
+                    </React.Fragment>
+                  ))}
+
+                  {/* X축 날짜 라벨 */}
+                  {trendData.map((d, i) => (
+                    <text
+                      key={`label-${i}`}
+                      x={10 + (i / 6) * 240}
+                      y="235"
+                      textAnchor="middle"
+                      fontSize="9"
+                      fill="#9ca3af"
+                      fontWeight="500"
+                    >
+                      {d.day}일
+                    </text>
                   ))}
                 </svg>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-white/20">
-                  <TrendingUp size={32} />
-                  <p className="text-[10px] mt-1">데이터를 입력하면 그래프가 생성됩니다</p>
-                </div>
-              )}
+
+                {/* 데이터가 없을 때 */}
+                {trendData.every(d => d.fasting === 0 && d.postBreakfast === 0 && d.postLunch === 0 && d.postDinner === 0) && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-300">
+                    <TrendingUp size={32} />
+                    <p className="text-[10px] mt-1">데이터를 입력하면 그래프가 생성됩니다</p>
+                  </div>
+                )}
+              </div>
             </div>
-            
-            <div className="flex justify-between text-[10px] font-bold text-white/30 px-1">
-              <span>7일 전</span>
-              <span>오늘</span>
+
+            {/* 혈당 분석 요약 카드 */}
+            <div className="mt-6 grid grid-cols-3 gap-2">
+              {/* 스파이크 */}
+              <div className="bg-gray-50 rounded-2xl p-3 flex flex-col justify-between h-24">
+                <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1"><Zap size={12} />스파이크</span>
+                <div className="mt-1">
+                  <span className="text-xl font-black text-gray-900">{sugarStats.spike}</span>
+                  <span className="text-[10px] text-gray-400 font-bold">/회</span>
+                </div>
+                <div className="flex gap-1 mt-2">
+                  {[...Array(Math.min(3, sugarStats.spike))].map((_, i) => <div key={i} className="w-2 h-2 rounded-full bg-rose-500" />)}
+                  {[...Array(Math.max(0, 3 - sugarStats.spike))].map((_, i) => <div key={i} className="w-2 h-2 rounded-full bg-gray-200" />)}
+                </div>
+              </div>
+
+              {/* 최고혈당 */}
+              <div className="bg-gray-50 rounded-2xl p-3 flex flex-col justify-between h-24">
+                <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1"><TrendingUp size={12} />최고혈당</span>
+                <div className="mt-1">
+                  <span className="text-xl font-black text-gray-900">{sugarStats.max}</span>
+                  <span className="text-[10px] text-gray-400 font-bold">/200</span>
+                </div>
+                <div className="w-full h-1.5 bg-gray-200 rounded-full mt-2 overflow-hidden">
+                  <div className={`h-full rounded-full ${sugarStats.max > 200 ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (sugarStats.max / 250) * 100)}%` }} />
+                </div>
+              </div>
+
+              {/* 평균혈당 */}
+              <div className="bg-gray-50 rounded-2xl p-3 flex flex-col justify-between h-24">
+                <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1"><Activity size={12} />평균혈당</span>
+                <div className="mt-1">
+                  <span className="text-xl font-black text-gray-900">{sugarStats.avg}</span>
+                  <span className="text-[10px] text-gray-400 font-bold">/140</span>
+                </div>
+                <div className="w-full h-1.5 bg-gray-200 rounded-full mt-2 overflow-hidden">
+                  <div className={`h-full rounded-full ${sugarStats.avg > 140 ? 'bg-orange-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (sugarStats.avg / 200) * 100)}%` }} />
+                </div>
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* 혈당 그래프 모달 */}
+
 
       {/* Main Feature Grid */}
       <div className="px-5 grid grid-cols-2 gap-4 mb-8">

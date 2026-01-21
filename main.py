@@ -1,23 +1,47 @@
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import boto3
 import uvicorn
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import json
 import base64
 import os
+import re
+import traceback
 from dotenv import load_dotenv
-from decimal import Decimal
+import torch
 
+# --- [NEW] Local AI & Database Stack & RAG ---
+from sqlalchemy import create_engine, Column, String, Integer, JSON, Text, DateTime, Float, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+
+# from langchain_community.chat_models import ChatOllama # [Ollama 제거]
+from langchain_ollama import ChatOllama
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 # 환경 변수 로드
-load_dotenv()
+# 환경 변수 로드
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+load_status = load_dotenv(env_path)
+print(f"📂 Loading .env from: {env_path} (Success: {load_status})")
+
+
+from fastapi.staticfiles import StaticFiles
 
 # 1. 앱 생성 및 설정
 app = FastAPI()
 
-# CORS 설정 (프론트엔드 접속 허용)
+# 정적 파일 서빙 설정 (로컬 이미지용)
+# 배포 시 static 폴더만 같이 옮기면 됨
+if not os.path.exists("static"):
+    os.makedirs("static")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -26,7 +50,251 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. 데이터 구조 정의 (Pydantic Models)
+# 2. SQLite 데이터베이스 설정
+DATABASE_URL = "sqlite:///./caremeal.db"
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# 3. DB 모델 정의
+class User(Base):
+    __tablename__ = "users"
+    user_id = Column(String, primary_key=True, index=True)
+    password = Column(String)
+    name = Column(String)
+    age = Column(Integer)
+    height = Column(Float)
+    weight = Column(Float)
+    gender = Column(String)
+    diabetes_type = Column(String)
+    other_conditions = Column(String) # JSON String or Comma-separated
+    details = Column(JSON, default={})
+    joined_at = Column(DateTime, default=datetime.now)
+
+class ChatLog(Base):
+    __tablename__ = "chat_logs"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, index=True)
+    role = Column(String) # user or ai
+    content = Column(Text)
+    timestamp = Column(DateTime, default=datetime.now)
+
+class Recipe(Base):
+    __tablename__ = "recipes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)          # 메뉴명
+    description = Column(String)               # 한줄 설명
+    image_url = Column(String)                 # 이미지 URL (없으면 기본 이미지)
+    disease_tag = Column(String)               # 추천 질환 태그 (콤마로 구분, 예: '당뇨,비만')
+    category = Column(String)                  # 카테고리 (한식, 일품 등)
+    diet_type = Column(String)                 # 식단 타입 (고기, 해산물, 비건 등)
+    ingredients = Column(Text)                 # 재료 목록 (검색/유사도 분석용)
+    instructions = Column(Text)                # [New] 조리 방법 (상세 텍스트)
+    time_minutes = Column(Integer)             # 조리 시간 (분)
+    
+    # 영양 정보 (1인분 기준)
+    calories = Column(Integer)
+    carbs = Column(Float)
+    protein = Column(Float)
+    fat = Column(Float)
+    sodium = Column(Float)                     # 나트륨 (mg)
+
+class MealRecord(Base):
+    __tablename__ = "meal_records"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    date = Column(String, index=True) # YYYY-MM-DD
+    meal_type = Column(String) # breakfast, lunch, dinner, snack
+    menu = Column(String)
+    calories = Column(Integer)
+    carbs = Column(Integer)
+    protein = Column(Integer)
+    fat = Column(Integer)
+    image_url = Column(String, nullable=True)
+
+class HealthRecord(Base):
+    __tablename__ = "health_records"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    date = Column(String, index=True)
+    time_slot = Column(String) # fasting, post_morning, post_lunch...
+    value = Column(Integer) # 혈당 수치
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    recipe_id = Column(Integer, ForeignKey("recipes.id"))
+    preference = Column(String)  # 'like' or 'dislike'
+    timestamp = Column(DateTime, default=datetime.now)
+
+# DB 테이블 생성
+Base.metadata.create_all(bind=engine)
+
+# DB 세션 의존성
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# 4. LLM 설정 (Cloud Ollama Proxy)
+import requests
+from typing import List, Optional, Any, Dict
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.outputs import ChatResult, ChatGeneration
+
+# 4. LLM 설정 (Custom Cloud Proxy Wrapper)
+# .env 파일에서 API 키 로드
+fav_api_key_raw = os.getenv("FAV_API_KEY")
+fav_api_key = fav_api_key_raw.strip() if fav_api_key_raw else ""
+ollama_url = "https://fav.nezip.co.kr/ollama"
+
+# [Custom Chat Model] requests를 직접 사용하여 확실하게 헤더 전송
+class CustomOllamaChat(BaseChatModel):
+    base_url: str
+    api_key: str
+    model_name: str = "llama3.1"
+    temperature: float = 0.7
+
+    def _generate(self, messages: List[BaseMessage], stop: Optional[List[str]] = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
+        # 메시지 변환 (LangChain -> OpenAI/Ollama Format)
+        formatted_messages = []
+        for msg in messages:
+            role = "user"
+            if isinstance(msg, SystemMessage): role = "system"
+            elif isinstance(msg, AIMessage): role = "assistant"
+            
+            content = msg.content
+            images = []
+
+            # 이미지 처리 (Vision) - LangChain 멀티모달 포맷 처리
+            if isinstance(content, list):
+                text_content = ""
+                for part in content:
+                    if isinstance(part, str):
+                        text_content += part
+                    elif isinstance(part, dict):
+                        if part.get("type") == "text":
+                            text_content += part.get("text", "")
+                        elif part.get("type") == "image_url":
+                            # base64 이미지 데이터 추출 (data:image/jpeg;base64,...)
+                            # Ollama API는 보통 'images': [base64_string] 형태를 원함
+                            img_url_data = part.get("image_url", {})
+                            # image_url이 dict가 아니라 str일 수도 있음
+                            if isinstance(img_url_data, str):
+                                img_url = img_url_data
+                            else:
+                                img_url = img_url_data.get("url", "")
+                            
+                            if img_url and img_url.startswith("data:image"):
+                                # 헤더 제거하고 순수 Base64만 추출
+                                try:
+                                    base64_str = img_url.split(",")[1]
+                                    images.append(base64_str)
+                                except IndexError:
+                                    pass
+                
+                content = text_content
+            
+            # 메시지 객체 구성
+            message_payload = {"role": role, "content": content}
+            if images:
+                message_payload["images"] = images
+                
+            formatted_messages.append(message_payload)
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": self.model_name,
+            "messages": formatted_messages,
+            "stream": False,
+            "options": {
+                "temperature": self.temperature
+            }
+        }
+
+        try:
+            # 실제 호출 (User 예제 코드와 동일 방식)
+            response = requests.post(f"{self.base_url}/api/chat", headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            
+            result_json = response.json()
+            ai_content = result_json["message"]["content"]
+            
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content=ai_content))])
+            
+        except Exception as e:
+            print(f"🚨 Custom LLM Error: {e}")
+            if 'response' in locals() and response is not None:
+                print(f"Server Response: {response.text}")
+            raise e
+
+    @property
+    def _llm_type(self) -> str:
+        return "custom_ollama"
+
+# 4-1. LLM 초기화 (Custom Class 사용)
+if fav_api_key:
+    print(f"🔑 API Key Loaded: {fav_api_key[:4]}*** (Len: {len(fav_api_key)})")
+else:
+    print("🚨 API Key NOT FOUND! Please check .env file.")
+
+llm_text = CustomOllamaChat(base_url=ollama_url, api_key=fav_api_key, model_name="llama4:latest", temperature=0.7)
+# Vision 모델도 이제 CustomOllamaChat (llama4) 사용
+llm_vision = CustomOllamaChat(base_url=ollama_url, api_key=fav_api_key, model_name="llama4:latest", temperature=0.2)
+llm_agent = CustomOllamaChat(base_url=ollama_url, api_key=fav_api_key, model_name="llama4:latest", temperature=0.5)
+
+# 4-2. RAG 시스템 변수 (전역)
+vector_store = None
+retriever = None
+
+@app.on_event("startup")
+async def startup_event():
+    global vector_store, retriever
+    print("🚀 [Startup] RAG 시스템 초기화 중...")
+    
+    # 1. 임베딩 모델 로드 (Mac M3 가속: MPS, CUDA: NVIDIA, CPU: Fallback)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    try:
+        if torch.backends.mps.is_available():
+            device = "mps"
+    except:
+        pass
+
+    print(f"🖥️ AI Device: {device}")
+
+    embeddings = HuggingFaceEmbeddings(
+        model_name="jhgan/ko-sbert-nli",
+        model_kwargs={'device': device}
+    )
+    
+    persist_directory = "./chroma_db"
+    
+    # 2. 벡터 DB 로드 (DB가 있어야만 함)
+    if os.path.exists(persist_directory) and os.listdir(persist_directory):
+        print(f"📦 기존 벡터 DB를 로드합니다: {persist_directory}")
+        vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+        
+        # 3. Retriever 설정
+        retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+        print("✅ RAG 시스템 준비 완료!")
+    else:
+        print("⚠️ 벡터 DB가 존재하지 않습니다.")
+        print("🚨 RAG 기능이 비활성화됩니다.")
+        print("💡 터미널에서 'python ingest.py'를 실행하여 데이터를 먼저 학습시켜 주세요.")
+        retriever = None
+
+# 5. 데이터 구조 (Pydantic)
+from typing import Any, Optional, Union
+
 class ChatRequest(BaseModel):
     user_message: str
     user_id: str = "guest"
@@ -35,360 +303,362 @@ class SignUpRequest(BaseModel):
     user_id: str
     password: str
     name: str
-    age: int
+    age: Union[int, str] # 프론트에서 문자열로 올 수도 있음
     diabetes_type: str
-    details: dict | None = None # 상세 진단 정보 저장용 유연한 필드
+    details: Optional[Any] = {} # 어떤 데이터든 허용
 
 class LoginRequest(BaseModel):
     user_id: str
     password: str
 
-# 3. AWS 설정 (본인 ID 확인 필수!)
-KB_ID = os.getenv("KB_ID")  # 환경 변수에서 로드
-MODEL_ARN = "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0"
+class MealItem(BaseModel):
+    menu: str
+    calories: int
+    carbs: int
+    protein: int
+    fat: int
 
-# AWS credentials 환경 변수에서 로드
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_DEFAULT_REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+class DailyRecordRequest(BaseModel):
+    user_id: str
+    date: str
+    meals: dict[str, MealItem] # key: breakfast, lunch, dinner
+    blood_sugar: dict[str, int] # key: fasting, postBreakfast...
 
-# --- AWS 클라이언트 연결 (이 부분이 없어서 에러가 났던 겁니다!) ---
-# 1) Bedrock 연결
-bedrock_agent = boto3.client(
-    service_name='bedrock-agent-runtime',
-    region_name=AWS_DEFAULT_REGION,
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
-)
-bedrock_runtime = boto3.client(
-    service_name='bedrock-runtime',
-    region_name=AWS_DEFAULT_REGION,
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
-)
-
-# 2) DynamoDB 연결
-dynamodb = boto3.resource(
-    'dynamodb',
-    region_name=AWS_DEFAULT_REGION,
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY
-)
-
-# 3) 테이블 연결
-chat_table = dynamodb.Table('CareMeal-ChatLog') # 채팅 로그용 테이블
-user_table = dynamodb.Table('CareMeal-Users')   # 회원가입용 테이블
-# -----------------------------------------------------------
-
-# 4. 헬퍼 함수: 채팅 로그 저장
-def save_to_dynamodb(user_id, role, message):
-    try:
-        chat_table.put_item(
-            Item={
-                'user_id': user_id,
-                'timestamp': datetime.now().isoformat(),
-                'message_id': str(uuid.uuid4()),
-                'role': role,
-                'content': message
-            }
-        )
-    except Exception as e:
-        print(f"⚠️ 채팅 로그 저장 실패: {e}")
-
-# 5. 헬퍼 함수: 유저 정보(Row) 조회
-def get_user_profile(user_id):
-    try:
-        response = user_table.get_item(Key={'user_id': user_id})
-        if 'Item' in response:
-            return response['Item']
-    except Exception as e:
-        print(f"⚠️ 유저 정보 조회 실패: {e}")
-    return None
-
-# 6. 헬퍼 함수: 나이별 페르소나 선택
-# 6. 헬퍼 함수: 나이 및 질환별 페르소나 선택
+# 6. 헬퍼 함수: 페르소나 (말투 강화)
 def get_persona_by_age(age, diabetes_type="일반"):
-    disease_context = f"환자는 현재 '{diabetes_type}' 진단을 받은 상태입니다. 이에 맞춰 혈당 관리와 합병증 예방에 중점을 둔 조언을 해야 합니다."
-    
+    disease_context = f"환자는 현재 '{diabetes_type}' 진단을 받은 상태입니다."
     base_persona = ""
+    # 나이대별 말투를 아주 구체적으로 지시
     if 10 <= age <= 29:
         base_persona = """
-        [비조: 활기차고 동기부여를 주는 30년 경력의 건강 트레이너]
-        너는 사용자의 첫 문장에서 말투를 파악해 비슷하게 맞추는 미러링 기법을 사용해.
-        젊은 층임을 고려해 너무 딱딱한 의학 용어보다는 실천 가능한 꿀팁 위주로 설명해줘.
-        단, 의학적 사실에 기반해야 하며, 인스턴트나 배달 음식 섭취를 줄이는 방향으로 유도해.
-        상태나 주의사항을 강조할 때는 색깔(Markdown Bold 등)을 사용해줘.
-        아이콘(이모지)을 적절히 사용
-
-        ★중요: 사용자가 레시피, 식단, 조리법 등을 요구하면:
-        1. 간단하게 필요한 재료와 핵심 조리법만 채팅으로 나열해줘.
-        2. 답변의 맨 마지막 줄에 반드시 "[[CUSTOM_DIET_LINK]]" 라는 텍스트를 있는 그대로 추가해줘.
-           (이 텍스트는 화면에서 '맞춤 식단 보러가기' 버튼으로 자동 변환됩니다.)
+        [Role: 열정적인 헬스 트레이너 PT쌤]
+        - 말투: "회원님! ~하셨네요! 🔥", "~하는 게 좋아요! 💪" 처럼 에너지가 넘치는 '해요체'를 쓰세요.
+        - 특징: 문장 끝마다 이모지(🔥, 💪, 🥗, 👍)를 적극적으로 붙이세요. 동기 부여를 팍팍 해주세요.
         """
     elif 30 <= age <= 49:
         base_persona = """
-        [어조: 전문적이고 신뢰감 있는 30년 경력의 전문의 '김닥터']
-        사회생활로 바쁜 3040세대임을 고려해, 현실적인 식단 조절법과 스트레스 관리법을 포함해줘.
-        단호하지만 따뜻한 어조로, 만성질환 예방과 관리를 위한 구체적인 수치를 제시하며 설명해.
-        상태나 주의사항을 강조할 때는 색깔(Markdown Bold 등)을 사용해줘.
-        아이콘(이모지)을 적절히 사용
-
-        ★중요: 사용자가 레시피, 식단, 조리법 등을 요구하면:
-        1. 간단하게 필요한 재료와 핵심 조리법만 채팅으로 나열해줘.
-        2. 답변의 맨 마지막 줄에 반드시 "[[CUSTOM_DIET_LINK]]" 라는 텍스트를 있는 그대로 추가해줘.
-           (이 텍스트는 화면에서 '맞춤 식단 보러가기' 버튼으로 자동 변환됩니다.)
+        [Role: 냉철하지만 따뜻한 의사 김닥터]
+        - 말투: "~입니다.", "~합니다." 처럼 정중하고 신뢰감 있는 '하십시오체'를 쓰세요.
+        - 특징: 전문적인 내용을 쉽게 풀어서 설명하되, 과한 이모지는 자제하고 단호하면서도 따뜻하게 조언하세요.
         """
     elif 50 <= age <= 69:
         base_persona = """
-        [어조: 꼼꼼하고 다정다감한 30년 경력의 임상 영양사]
-        갱년기 및 노화가 시작되는 시기임을 고려해, 영양 균형과 소화가 잘 되는 식단을 추천해줘.
-        이미 만성질환이 있다면, 약물 복용 시 주의할 점이나 식사 순서(채소->단백질->탄수화물) 등을 
-        구체적으로 가이드해줘.
-        상태나 주의사항을 강조할 때는 색깔(Markdown Bold 등)을 사용해줘.
-        아이콘(이모지)을 적절히 사용
-        
-        ★중요: 사용자가 레시피, 식단, 조리법 등을 요구하면:
-        1. 간단하게 필요한 재료와 핵심 조리법만 채팅으로 나열해줘.
-        2. 답변의 맨 마지막 줄에 반드시 "[[CUSTOM_DIET_LINK]]" 라는 텍스트를 있는 그대로 추가해줘.
-           (이 텍스트는 화면에서 '맞춤 식단 보러가기' 버튼으로 자동 변환됩니다.)
+        [Role: 꼼꼼하고 친근한 임상 영양사]
+        - 말투: "~했군요~", "~하면 좋아요." 처럼 부드럽고 나긋나긋한 '해요체'를 쓰세요.
+        - 특징: 어려운 의학 용어 대신 쉬운 비유를 사용하고, 소화가 잘 되는지 걱정해주는 멘트를 섞으세요.
         """
     else:
         base_persona = """
-        [어조: 짧고 간결하게 설명하는 친절하고 인내심 많은 베테랑 간호사]
-        어르신임을 고려해 아주 쉽고 천천히 설명하듯 말해줘.
-        복잡한 설명보다는 '이건 드셔도 좋아요', '이건 조금만 드세요' 처럼 명확한 지침을 줘.
-        중요한 수치나 주의사항은 1. 2. 3. 번호를 매겨서 보기 편하게 정리해드려.
-        상태나 주의사항을 강조할 때는 색깔(Markdown Bold 등)을 사용해줘.
-        아이콘(이모지)을 적절히 사용하여 친근감을 줘.
-        
-        답변이 너무 길면 읽기 힘드니 한눈에 보기 편하게 요약해줘.
-        
-        ★중요: 사용자가 레시피, 식단, 조리법 등을 요구하면:
-        1. 간단하게 필요한 재료와 핵심 조리법만 채팅으로 나열해줘.
-        2. 답변의 맨 마지막 줄에 반드시 "[[CUSTOM_DIET_LINK]]" 라는 텍스트를 있는 그대로 추가해줘.
-           (이 텍스트는 화면에서 '맞춤 식단 보러가기' 버튼으로 자동 변환됩니다.)
+        [Role: 베테랑 간호사 선생님]
+        - 말투: "어르신, ~하셨어요?", "~드시면 좋습니다." 처럼 아주 예의 바르고 천천히 말하는 '존댓말'을 쓰세요.
+        - 특징: 중요한 내용은 한 번 더 강조해주고, 건강을 챙겨드리는 손녀/손자 같은 마음으로 따뜻하게 대하세요.
         """
     
-    return f"{base_persona}\n\n[환자 질환 정보]\n{disease_context}"
+    return f"{base_persona}\n{disease_context}\n레시피가 필요해 보이면 답변 끝에 '[[CUSTOM_DIET_LINK]]'를 붙이세요."
 
-# 5. API 엔드포인트: 채팅 (Chat)
-# main.py 의 chat_endpoint 부분을 이걸로 교체하세요
+# 7. API 엔드포인트
+
+@app.post("/signup")
+async def signup_endpoint(request: SignUpRequest, db: Session = Depends(get_db)):
+    print(f"📝 회원가입 요청: {request.user_id}")
+    existing_user = db.query(User).filter(User.user_id == request.user_id).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="이미 존재하는 아이디입니다.")
+    
+    new_user = User(
+        user_id=request.user_id,
+        password=request.password,
+        name=request.name,
+        age=int(request.age), # 문자열일 경우 숫자로 변환
+        diabetes_type=request.diabetes_type,
+        details=request.details or {}
+    )
+    db.add(new_user)
+    db.commit()
+    return {"status": "success", "message": "회원가입 완료"}
+
+@app.post("/login")
+async def login_endpoint(request: LoginRequest, db: Session = Depends(get_db)):
+    print(f"🔑 로그인 요청: {request.user_id}")
+    user = db.query(User).filter(User.user_id == request.user_id).first()
+    if not user or user.password != request.password:
+        raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 잘못되었습니다.")
+    
+    return {
+        "status": "success",
+        "message": "로그인 성공",
+        "data": {
+            "name": user.name,
+            "age": user.age,
+            "diabetes_type": user.diabetes_type,
+            "conditions": [user.diabetes_type],
+            **user.details # 상세 정보 병합
+        }
+    }
+
+@app.get("/records/{user_id}")
+def get_records(user_id: str, date: str, db: Session = Depends(get_db)):
+    # 1. 식단 조회
+    meals = db.query(MealRecord).filter(
+        MealRecord.user_id == user_id, 
+        MealRecord.date == date
+    ).all()
+    
+    # 2. 혈당 조회
+    health = db.query(HealthRecord).filter(
+        HealthRecord.user_id == user_id, 
+        HealthRecord.date == date
+    ).all()
+    
+    return {
+        "date": date,
+        "meals": {m.meal_type: {"menu": m.menu, "calories": m.calories, "carbs": m.carbs, "protein": m.protein, "fat": m.fat} for m in meals},
+        "blood_sugar": {h.time_slot: h.value for h in health}
+    }
+
+@app.post("/records")
+def save_records(req: DailyRecordRequest, db: Session = Depends(get_db)):
+    # 기존 데이터 삭제 (해당 날짜 덮어쓰기 전략 - 간단구현)
+    db.query(MealRecord).filter(MealRecord.user_id == req.user_id, MealRecord.date == req.date).delete()
+    db.query(HealthRecord).filter(HealthRecord.user_id == req.user_id, HealthRecord.date == req.date).delete()
+    
+    # 식단 저장
+    for m_type, item in req.meals.items():
+        if item.menu: # 메뉴가 있을 때만
+            db.add(MealRecord(
+                user_id=req.user_id, date=req.date, meal_type=m_type,
+                menu=item.menu, calories=item.calories, carbs=item.carbs, protein=item.protein, fat=item.fat
+            ))
+            
+    # 혈당 저장
+    for h_type, val in req.blood_sugar.items():
+        if val > 0:
+            db.add(HealthRecord(user_id=req.user_id, date=req.date, time_slot=h_type, value=val))
+            
+    db.commit()
+    return {"status": "success"}
+
+# 헬퍼 함수: DB에서 사용자 정보 가져오기
+def get_user_profile_db(user_id: str, db: Session):
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if user:
+        return {
+            "name": user.name,
+            "age": user.age,
+            "diabetes_type": user.diabetes_type,
+            "details": user.details
+        }
+    return None
+
+# 헬퍼 함수: 특정 날짜 식단/혈당 가져오기 (AI용)
+def get_daily_health_summary(user_id: str, date_str: str, db: Session):
+    meals = db.query(MealRecord).filter(MealRecord.user_id == user_id, MealRecord.date == date_str).all()
+    health = db.query(HealthRecord).filter(HealthRecord.user_id == user_id, HealthRecord.date == date_str).all()
+    
+    summary = f"[{date_str} 건강 기록]\n"
+    print(f"🕵️ 건강 기록 조회 ({user_id}, {date_str}): 식단 {len(meals)}개, 혈당 {len(health)}개") # [Log]
+    if meals:
+        # 영어 meal_type을 한글로 변환하여 LLM에게 제공
+        type_map = {"breakfast": "아침", "lunch": "점심", "dinner": "저녁", "snack": "간식"}
+        summary += "- 식단:\n" + "\n".join([f"  * {type_map.get(m.meal_type, m.meal_type)}: {m.menu} ({m.calories}kcal)" for m in meals]) + "\n"
+    else:
+        summary += "- 식단: 기록 없음\n"
+        
+    if health:
+        summary += "- 혈당:\n" + "\n".join([f"  * {h.time_slot}: {h.value}" for h in health]) + "\n"
+    else:
+        summary += "- 혈당: 기록 없음\n"
+        
+    return summary
 
 @app.post("/chat")
-async def chat_endpoint(request: ChatRequest):
-    print(f"📩 채팅 요청: {request.user_message} ({request.user_id})")
+async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
+    print(f"📩 채팅 요청: {request.user_message}")
     
+    # 0. 날짜 감지 (간단 구현: '어제' 키워드 체크)
+    target_date = datetime.now()
+    if "어제" in request.user_message:
+        target_date = target_date - timedelta(days=1)
+    
+    target_date_str = target_date.strftime("%Y-%m-%d")
+    
+    # 1. 유저 정보 조회
+    user = db.query(User).filter(User.user_id == request.user_id).first()
+    persona = "친절한 의료 AI"
+    user_info = "정보 없음"
+    
+    if user:
+        persona = get_persona_by_age(user.age, user.diabetes_type)
+        user_info = f"이름: {user.name}, 나이: {user.age}, 보유 질환: {user.diabetes_type}"
+
+    # 2. RAG 검색 (문서 조회)
+    context_text = ""
+    sources = []
+    
+    if retriever:
+        try:
+            docs = retriever.invoke(request.user_message)
+            context_text = "\n\n".join([doc.page_content for doc in docs])
+            sources = list(set([os.path.basename(doc.metadata.get("source", "문서")) for doc in docs]))
+            print(f"📚 검색된 문서: {sources}")
+        except Exception as e:
+            print(f"⚠️ 검색 중 오류 발생: {e}")
+            
+    # 3. 시스템 프롬프트 구성
+    now = datetime.now()
+    current_time_str = now.strftime("%Y년 %m월 %d일 %H시 %M분")
+    
+    # 시간대별 식사 구분 로직
+    hour = now.hour
+    minute = now.minute
+    total_minutes = hour * 60 + minute
+    
+    meal_time_context = "간식/야식"
+    if 6 * 60 <= total_minutes < 10 * 60 + 30: # 06:00 ~ 10:30
+        meal_time_context = "아침"
+    elif 10 * 60 + 30 <= total_minutes < 15 * 60: # 10:30 ~ 15:00
+        meal_time_context = "점심"
+    elif 15 * 60 <= total_minutes < 20 * 60: # 15:00 ~ 20:00
+        meal_time_context = "저녁"
+    else:
+        meal_time_context = "야식 (또는 내일 아침)"
+
+    # 타겟 날짜의 기록 가져오기
+    health_summary = get_daily_health_summary(request.user_id, target_date_str, db)
+
+    # [NEW] 맞춤 레시피 DB 조회 (상위 3개)
+    rec_list_str = "현재 추천 가능한 DB 레시피가 없습니다."
     try:
-        # 1. 사용자 질문 DB 저장 (로그)
-        save_to_dynamodb(request.user_id, 'user', request.user_message)
+        rec_data = get_recipe_recommendations(request.user_id, db)
+        if rec_data and 'recommendations' in rec_data:
+            rec_list_str = ""
+            top_recipes = rec_data['recommendations'][:3]
+            for r in top_recipes:
+                rec_list_str += f"- (ID: {r['id']}) {r['name']}: {r['description']} / {r['calories']}kcal\n"
+    except Exception as e:
+        print(f"⚠️ 레시피 로드 실패: {e}")
 
-        # ---------------------------------------------------------
-        # ★ [NEW] 2. DynamoDB에서 유저 정보(프로필) 가져오기 & 페르소나 선정
-        # ---------------------------------------------------------
-        profile = get_user_profile(request.user_id)
-        
-        user_info_str = "정보 없음 (비회원)"
-        persona_style = "너는 30년 경력의 당뇨 전문의 '김닥터'야. 환자에게 따뜻하게 대하고 의학적 사실에 기반해 답변해줘." # 기본값
+    system_prompt = f"""
+    당신은 만성 질환 환자를 돕는 전문 의료 AI입니다.
+    
+    [현재 시각]
+    {current_time_str}
+    
+    [현재 추천 시간대]
+    👉 **{meal_time_context}** 시간입니다. (식단 추천 시 이 시간대에 맞는 메뉴를 추천하세요.)
+    
+    [환자 정보]
+    {user_info}
+    
+    [조회된 건강 기록 ({target_date_str} 기준)]
+    {health_summary}
+    (※ 주의: 위 기록에 '기록 없음'이라고 되어 있으면, 절대로 사용자가 밥을 먹었다고 가정하지 마세요. 없는 내용을 지어내면 해고됩니다.)
+    
+    [참고 의학 자료 (RAG)]
+    {context_text if context_text else "관련 자료 없음 (일반적인 의학 지식으로 답변)."}
+    
+    [🍱 현재 환자 맞춤 DB 레시피 목록 (최우선 추천 대상)]
+    {rec_list_str}
 
-        if profile:
-            age = int(profile['age'])
-            diabetes_type = profile.get('diabetes_type', '일반')
-            user_info_str = f"이름: {profile['name']}, 나이: {age}세, 진단명: {diabetes_type}"
-            persona_style = get_persona_by_age(age, diabetes_type)
-            print(f"🕵️‍♂️ 유저 정보 확인됨: {user_info_str} (페르소나 적용)")
+    [🔴 답변 원칙 (반드시 준수)]
+    1. **거짓말 금지**: 위 [건강 기록]에 없는 식단을 있는 것처럼 말하지 마세요. 기록이 없으면 "아직 {meal_time_context} 기록이 없네요!"라고 말하고 추천만 하세요.
+    2. **시간대 맞춤 추천**: 
+       - **아침/점심/저녁**: 든든하고 균형 잡힌 식단을 추천하세요.
+       - **야식**: 🚨 **경고부터 하세요.** "늦은 시간 섭취는 혈당을 급격히 높입니다."라고 말하고, 정 배고프면 '오이, 토마토, 따뜻한 차' 같은 가벼운 것만 추천하세요.
+    3. **DB 레시피 활용**: 식단을 추천할 때는 무조건 위 **[맞춤 DB 레시피 목록]**에 있는 메뉴를 1개 이상 골라서 제안하세요.
+    4. **추천 카드 생성 트리거 (매우 중요)**:
+       - 위 **[맞춤 DB 레시피 목록]**에 있는 메뉴를 추천했다면, 답변의 **맨 마지막 줄**에 `[RECIPE:ID:메뉴명]` 형식을 반드시 붙여주세요.
+       - 띄어쓰기 없이 정확히 쓰세요. 예: `[RECIPE:5:닭가슴살 샐러드]` (O), `[RECIPE: 5 : ...]` (X)
+       - ❌ 주의: `[[CUSTOM_LINK]]` 같은 건 절대 출력하지 마세요. 오직 `[RECIPE:...]`만 쓰세요.
 
-        # ---------------------------------------------------------
-        # ★ [NEW] 3. 페르소나에 유저 정보 섞기 (Context Injection)
-        # ---------------------------------------------------------
-        persona = f"""
-        [페르소나 지침]
-        {persona_style}
-        
-        [현재 대화 중인 환자 정보]
-        {user_info_str}
-        
-        [지시사항]
-        위 페르소나와 환자 정보를 바탕으로 맞춤형 조언을 해주세요.
-        
-        환자 질문: {request.user_message}
-        """
-        
-        # 4. AI 답변 생성 (RAG)
-        response = bedrock_agent.retrieve_and_generate(
-            input={'text': persona},
-            retrieveAndGenerateConfiguration={
-                'type': 'KNOWLEDGE_BASE',
-                'knowledgeBaseConfiguration': {
-                    'knowledgeBaseId': KB_ID,
-                    'modelArn': MODEL_ARN
-                }
-            }
-        )
-        answer = response['output']['text']
-        
-        # 5. AI 답변 DB 저장
-        save_to_dynamodb(request.user_id, 'ai', answer)
-        
-        # 6. 출처 추출 (파일 이름만)
-        citations = []
-        if 'citations' in response and response['citations']:
-             for ref in response['citations'][0]['retrievedReferences']:
-                 # S3 URI에서 파일명만 추출 (예: s3://bucket/path/to/diet.pdf -> diet.pdf)
-                 if 'location' in ref and 's3Location' in ref['location']:
-                     uri = ref['location']['s3Location']['uri']
-                     file_name = uri.split('/')[-1] # URL의 마지막 부분이 파일명
-                     citations.append(file_name)
-                 else:
-                     # S3가 아닌 경우 (데이터 소스 타입에 따라 다를 수 있음)
-                     citations.append("관련 문서")
+    5. **초간결 답변**: 말이 길어지면 안 됩니다. 핵심만 딱 자르세요. (존댓말 사용)
+    6. **가독성 (줄바꿈 필수)**: 문장 끝마다 줄바꿈을 하세요. 문단 사이에는 빈 줄을 넣으세요.
 
-        # ---------------------------------------------------------
-        # ★ [NEW] 7. RAG 검색 결과가 없을(Citations 공란) 경우 기본 모델로 폴백
-        # ---------------------------------------------------------
-        if not citations:
-            print("⚠️ RAG 검색 결과 없음 (Citations Empty). 기본 모델(Claude 3.5 Sonnet)로 전환합니다.")
-            
-            fallback_prompt = f"""
-            {persona}
-            
-            [상황 설명]
-            RAG(지식 검색) 시스템이 관련 문서를 찾지 못했습니다. (검색된 자료 없음)
-            따라서 당신의 일반적인 의학 지식과 상식을 활용해 답변해야 합니다.
-            
-            [지시사항]
-            1. 사용자 질문에 친절하고 전문적으로 답변하세요.
-            2. 답변의 시작 부분에 다음 문구를 반드시 포함하세요:
-               "📢 **내부 데이터베이스에서 관련 자료를 찾지 못해, AI 모델의 일반 지식으로 답변드립니다.**"
-            3. 답변은 설정된 페르소나의 말투를 유지하세요.
-            
-            사용자 질문: {request.user_message}
-            """
-            
-            # Base Model 호출 (Claude 3.5 Sonnet)
-            model_id = "anthropic.claude-3-5-sonnet-20240620-v1:0"
-            payload = {
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 1500,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": fallback_prompt
-                    }
-                ]
-            }
-            
-            try:
-                fb_response = bedrock_runtime.invoke_model(
-                    modelId=model_id,
-                    body=json.dumps(payload)
-                )
-                fb_response_body = json.loads(fb_response.get("body").read())
-                answer = fb_response_body["content"][0]["text"]
-                citations = ["AI 일반 상식 (검색 결과 없음)"]
-                print("✅ 기본 모델 폴백 답변 생성 완료")
-                
-            except Exception as fb_error:
-                print(f"🚨 기본 모델 폴백 실패: {fb_error}")
-                # 폴백도 실패하면 원래의(아마도 '모르겠다'는) RAG 답변을 그대로 둠
-                if not answer:
-                    answer = "죄송합니다. 관련 정보를 찾을 수 없으며, 일반적인 답변 생성 중에도 오류가 발생했습니다."
+    [답변 포맷 예시 - 추천 요청 시]
+    (기록이 없을 때)
+    아직 {meal_time_context} 식사 기록이 없으시네요! 🍽️
+    
+    **추천 {meal_time_context} 메뉴**
+    *   **메뉴**: (DB 레시피 중 하나)
+    *   **이유**: (짧은 이유)
+    
+    [RECIPE:12:추천메뉴명]
+
+    (기록이 있을 때)
+    오늘 {meal_time_context}은 잘 챙겨 드셨네요! 👍
+    
+    **다음 식사 추천**
+    *   **메뉴**: (다음 끼니 메뉴)
+    *   **팁**: (간단한 조언)
+    
+    [페르소나]
+    {persona}
+    """
+    
+    # 4. LangChain 호출
+    try:
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=request.user_message)
+        ]
+        
+        # Ollama 호출
+        response = llm_text.invoke(messages)
+        ai_reply = response.content
+        
+        # [Sanitize] 불필요한 태그 제거 및 보정
+        ai_reply = ai_reply.replace("[[CUSTOM_LINK]]", "").replace("[[CUSTOM_DIET_LINK]]", "")
+        # 혹시 모를 공백 제거
+        import re
+        ai_reply = re.sub(r'\[RECIPE:\s*(\d+)\s*:', r'[RECIPE:\1:', ai_reply)
+
+        # 5. 로그 저장 (SQLite)
+        db.add(ChatLog(user_id=request.user_id, role='user', content=request.user_message))
+        db.add(ChatLog(user_id=request.user_id, role='ai', content=ai_reply))
+        db.commit()
 
         return {
-            "reply": answer,
-            "sources": citations,
+            "reply": ai_reply,
+            "sources": sources if sources else ["일반 지식 (Local AI)"],
             "status": "success"
         }
-
     except Exception as e:
-        print(f"🚨 채팅 에러: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"🚨 AI 호출 에러: {e}")
+        raise HTTPException(status_code=500, detail="AI 응답 생성 실패")
 
-# Helper for DynamoDB Float issue
-def convert_floats_to_decimals(obj):
-    if isinstance(obj, list):
-        return [convert_floats_to_decimals(i) for i in obj]
-    elif isinstance(obj, dict):
-        return {k: convert_floats_to_decimals(v) for k, v in obj.items()}
-    elif isinstance(obj, float):
-        return Decimal(str(obj))
-    return obj
-
-# 7. API 엔드포인트: 회원가입 (Sign Up)
-@app.post("/signup")
-async def signup_endpoint(request: SignUpRequest):
-    print(f"📝 회원가입 요청: {request.user_id}, {request.name}")
-    try:
-        # 중복 ID 체크
-        response = user_table.get_item(Key={'user_id': request.user_id})
-        if 'Item' in response:
-            raise HTTPException(status_code=400, detail="이미 존재하는 아이디입니다.")
-        
-        # DynamoDB does not support float, convert to Decimal
-        safe_details = convert_floats_to_decimals(request.details or {})
-
-        # DB 저장
-        user_table.put_item(
-            Item={
-                'user_id': request.user_id,
-                'password': request.password,
-                'name': request.name,
-                'age': request.age,
-                'diabetes_type': request.diabetes_type,
-                'details': safe_details, # 상세 정보 저장 (Decimal 변환 됨)
-                'joined_at': datetime.now().isoformat()
-            }
-        )
-        return {"status": "success", "message": "회원가입이 완료되었습니다!"}
-
-    except Exception as e:
-        print(f"🚨 회원가입 에러: {e}")
-        raise HTTPException(status_code=500, detail="서버 오류가 발생했습니다.")
-
-# 7. API 엔드포인트: 식단 사진 분석 (Analyze Food)
 @app.post("/analyze-food")
-async def analyze_food_endpoint(
-    file: UploadFile = File(...),
-    user_id: str = Form(...)
-):
-    print(f"📸 식단 분석 요청: {file.filename} ({user_id})")
+async def analyze_food_endpoint(file: UploadFile = File(...), user_id: str = Form(...), db: Session = Depends(get_db)):
+    print(f"📸 식단 분석 요청: {file.filename}")
     
     try:
-        # 1. 이미지 읽기 및 인코딩
+        # 이미지 읽기 & Base64 인코딩
         image_bytes = await file.read()
-        encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+        encoded_image = base64.b64encode(image_bytes).decode('utf-8')
         
-        save_to_dynamodb(user_id, 'user', f"📸 [사진 업로드] {file.filename} 분석 요청")
+        # 유저 정보
+        user = db.query(User).filter(User.user_id == user_id).first()
+        persona = get_persona_by_age(user.age, user.diabetes_type) if user else "영양사"
 
-        # 2. 유저 정보 및 페르소나 준비
-        profile = get_user_profile(user_id)
-        user_info_str = "정보 없음 (비회원)"
-        persona_style = "너는 30년 경력의 전문의 '김닥터'야. 환자에게 따뜻하게 대하고 의학적 사실에 기반해 답변해줘."
-
-        if profile:
-            age = int(profile['age'])
-            diabetes_type = profile.get('diabetes_type', '일반')
-            user_info_str = f"이름: {profile['name']}, 나이: {age}세, 진단명: {diabetes_type}"
-            persona_style = get_persona_by_age(age, diabetes_type)
-
-        # 3. System Prompt 구성 (페르소나 + 지시사항 + JSON 포맷)
-        system_prompt = f"""
-        당신은 당뇨 환자를 돕는 전문 의료 AI입니다.
-        아래 페르소나와 환자 정보를 바탕으로, 사용자가 업로드한 음식 사진을 분석하고 영양학적 조언을 해주세요.
+        # 프롬프트 구성
+        prompt = f"""
+        [페르소나] {persona}
+        이 음식 사진을 분석해줘.
         
-        [페르소나 지침]
-        {persona_style}
+        [🔴 핵심 지침: "잡담 금지 & 형식 엄수"]
+        1. **서론/결론 절대 금지**: "안녕하세요", "사진을 보니~" 같은 인사말이나 부연 설명을 일절 하지 마세요.
+        2. **오직 결과만**: 아래 정해진 포맷의 텍스트만 출력하세요.
         
-        [환자 정보]
-        {user_info_str}
+        [1단계: 사용자에게 보여줄 짧은 요약]
+        ### 📸 이미지 분석
+        * **[메뉴명]**: 약 [칼로리]kcal
+        * **📊 영양**: 탄수화물 [g], 단백질 [g], 지방 [g]
+        * **💡 한줄평**: [30자 이내 짧은 평가]
         
-        [필수 지시사항]
-        1. 사진의 음식이 무엇인지 파악하고 메뉴 이름을 알려주세요.
-        2. 대략적인 칼로리와 탄수화물, 단백질, 지방을 추정하세요.
-        3. 당뇨 환자 관점에서 섭취 시 주의할 점(혈당 스파이크 등)을 친절하게 설명하세요.
-        4. ★필수: 답변의 맨 마지막에 반드시 아래 JSON 데이터만 정확히 추가하세요. 다른 설명 없이 JSON 블록만 있어야 합니다.
+        [2단계: 시스템 데이터 (반드시 포함)]
+        위 내용 밑에 다음 JSON 포맷을 정확히 붙여줘:
         ###JSON_START###
         {{
-            "menu": "메뉴 이름",
+            "menu": "메뉴명 (한글)",
             "calories": 0,
             "carbs": 0,
             "protein": 0,
@@ -396,97 +666,280 @@ async def analyze_food_endpoint(
         }}
         ###JSON_END###
         """
-
-        # 4. Bedrock Claude 3.5 호출 (Single Call)
-        model_id = "anthropic.claude-3-5-sonnet-20240620-v1:0"
-        payload = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 1500,
-            "system": system_prompt, # System Prompt 사용
-            "messages": [
+        
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": prompt},
                 {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": file.content_type,
-                                "data": encoded_image
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": "이 음식 사진을 분석해서 내 상태에 맞는 조언을 해줘."
-                        }
-                    ]
+                    "type": "image_url",
+                    "image_url": f"data:image/jpeg;base64,{encoded_image}"
                 }
             ]
-        }
-        
-        response = bedrock_runtime.invoke_model(
-            modelId=model_id,
-            body=json.dumps(payload)
         )
         
-        response_body = json.loads(response.get("body").read())
-        final_answer = response_body["content"][0]["text"]
-        print(f"🤖 AI 답변 생성 완료 (길이: {len(final_answer)})")
+        response = llm_vision.invoke([message])
+        result_text = response.content
+        print(f"🤖 Vision 응답: {result_text}")
         
-        # 5. 저장 및 리턴
-        save_to_dynamodb(user_id, 'ai', final_answer)
-        
-        return {
-            "reply": final_answer,
-            "status": "success"
-        }
+        # 로그 저장
+        db.add(ChatLog(user_id=user_id, role='user', content=f"[이미지 업로드] {file.filename}"))
+        db.add(ChatLog(user_id=user_id, role='ai', content=result_text))
+        db.commit()
 
-    except Exception as e:
-        print(f"🚨 식단 분석 에러: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-    except Exception as e:
-        print(f"🚨 회원가입 에러: {e}")
-        raise HTTPException(status_code=500, detail="서버 오류가 발생했습니다.")
-
-# 8. API 엔드포인트: 로그인 (Login)
-@app.post("/login")
-async def login_endpoint(request: LoginRequest):
-    print(f"🔑 로그인 요청: {request.user_id}")
-    try:
-        response = user_table.get_item(Key={'user_id': request.user_id})
-        if 'Item' not in response:
-             raise HTTPException(status_code=401, detail="존재하지 않는 아이디입니다.")
-        
-        item = response['Item']
-        if item['password'] != request.password:
-            raise HTTPException(status_code=401, detail="비밀번호가 일치하지 않습니다.")
-            
-        print(f"✅ 로그인 성공: {item['name']}")
-        
-        # 상세 정보 가져오기
-        details = item.get('details', {})
-        
+        # LLM이 이미 포맷팅된 텍스트 + JSON을 주므로 그대로 리턴
         return {
             "status": "success",
-            "message": "로그인 성공",
-            "data": {
-                "name": item['name'],
-                "age": int(item['age']),
-                "diabetes_type": item['diabetes_type'],
-                # DB의 details 필드에서 복원, 없으면 기본값
-                "conditions": [item['diabetes_type']], # 주요 질환은 별도 관리
-                "gender": details.get('gender', "미정"), 
-                "height": details.get('height', "0"),
-                "weight": details.get('weight', "0"),
-                "bmi": details.get('bmi', 0),
-                "weightStatus": details.get('weightStatus', "미정"),
-                "habitScore": details.get('habitScore', 0),
-                "summary": details.get('summary', {}) 
-            }
+            "reply": result_text 
         }
-    except HTTPException as he:
-        raise he
+
     except Exception as e:
-        print(f"🚨 로그인 에러: {e}")
-        raise HTTPException(status_code=500, detail="서버 오류가 발생했습니다.")
+        print(f"🚨 이미지 분석 에러: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class NutritionEstimateRequest(BaseModel):
+    menu_name: str
+
+@app.post("/estimate-nutrition")
+async def estimate_nutrition_endpoint(request: NutritionEstimateRequest):
+    print(f"🥦 영양 성분 추론 요청: {request.menu_name}")
+    try:
+        prompt = f"""
+        당신은 전문 영양사입니다. 
+        사용자가 입력한 메뉴: "{request.menu_name}"
+        
+        이 메뉴의 1인분 기준 대략적인 영양 성분을 추정해서 JSON 포맷으로 알려주세요.
+        다른 말은 하지 말고, 오직 JSON 데이터만 출력하세요.
+        
+        [출력 형식]
+        {{
+            "calories": 0,
+            "carbs": 0,
+            "protein": 0,
+            "fat": 0
+        }}
+        (단위: kcal, g)
+        """
+        
+        # 텍스트 모델 호출
+        messages = [HumanMessage(content=prompt)]
+        response = llm_text.invoke(messages)
+        content = response.content
+        
+        # JSON 파싱 시도 (LLM이 마크다운 ```json ... ``` 을 붙일 수 있으므로 처리)
+        import re
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            return json.loads(json_str)
+        else:
+            # 실패 시 기본값 리턴
+            return {"calories": 0, "carbs": 0, "protein": 0, "fat": 0}
+
+    except Exception as e:
+        print(f"🚨 추론 에러: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+from sqlalchemy import or_, ForeignKey
+from sqlalchemy.orm import relationship
+
+from typing import List, Optional
+
+# --- Preference Request Model ---
+class PreferenceRequest(BaseModel):
+    user_id: str
+    recipe_id: int
+    preference: str  # 'like' or 'dislike'
+    
+@app.post("/user/preference")
+async def save_user_preference(req: PreferenceRequest, db: Session = Depends(get_db)):
+    # 기존 기록 확인 (중복 방지)
+    existing = db.query(UserPreference).filter(
+        UserPreference.user_id == req.user_id, 
+        UserPreference.recipe_id == req.recipe_id
+    ).first()
+    
+    if existing:
+        existing.preference = req.preference
+        existing.timestamp = datetime.now()
+        print(f"🔄 선호도 업데이트: {req.user_id} -> Recipe {req.recipe_id}: {req.preference}")
+    else:
+        new_pref = UserPreference(
+            user_id=req.user_id,
+            recipe_id=req.recipe_id,
+            preference=req.preference
+        )
+        db.add(new_pref)
+        print(f"❤️ 선호도 저장: {req.user_id} -> Recipe {req.recipe_id}: {req.preference}")
+    
+    db.commit()
+    return {"status": "success"}
+
+# --- Pydantic Models for Response ---
+class RecipeSchema(BaseModel):
+    id: int
+    name: Optional[str] = "이름 없음"
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+    disease_tag: Optional[str] = None
+    category: Optional[str] = None
+    diet_type: Optional[str] = None
+    ingredients: Optional[str] = None
+    instructions: Optional[str] = None         # [New]
+    time_minutes: Optional[int] = 20
+    calories: Optional[int] = 0
+    carbs: Optional[float] = 0.0
+    protein: Optional[float] = 0.0
+    fat: Optional[float] = 0.0
+    sodium: Optional[float] = 0.0
+    is_liked: Optional[bool] = False # [New] 좋아요 여부
+
+    class Config:
+        from_attributes = True # ORM 객체를 Pydantic 모델로 읽기 위함 (구 orm_mode)
+
+class RecommendationResponse(BaseModel):
+    user_condition: str
+    recommendations: List[RecipeSchema]
+
+from fastapi.responses import JSONResponse
+import traceback
+
+@app.get("/recipes/recommendations/{user_id}")
+def get_recipe_recommendations(user_id: str, db: Session = Depends(get_db)):
+    try:
+        print(f"🥗 맞춤 레시피 추천 요청: {user_id}")
+        
+        # 1. 사용자 정보 확인
+        user = db.query(User).filter(User.user_id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # [1단계] Rule-Based Filtering (질환 기반 안전 필터링)
+        target_tags = []
+        
+        # 당뇨 및 대사증후군 정밀 분석
+        diabetes_info = user.diabetes_type or ""
+        if "당뇨" in diabetes_info: 
+            target_tags.append("당뇨")
+        
+        # [변경] 대사증후군 관련 데이터 통합 관리 (비만, 고지혈증 -> 대사증후군)
+        if "대사증후군" in diabetes_info:
+            target_tags.append("대사증후군")
+        
+        # 기타 질환
+        other_conds_str = user.other_conditions or "" 
+        if "고혈압" in other_conds_str and "고혈압" not in target_tags: 
+            target_tags.append("고혈압")
+        
+        # 고지혈증 -> 대사증후군으로 대체
+        if "고지혈증" in other_conds_str: 
+            if "대사증후군" not in target_tags:
+                target_tags.append("대사증후군")
+                
+        if "신부전" in other_conds_str: target_tags.append("신부전")
+            
+        if user.weight and user.height:
+             bmi = user.weight / ((user.height / 100) ** 2)
+             # 비만 -> 대사증후군으로 대체
+             if bmi >= 25: 
+                 if "대사증후군" not in target_tags:
+                     target_tags.append("대사증후군")
+        
+        if not target_tags: target_tags.append("일반건강")
+        
+        # 질환 태그 필터링
+        filter_conditions = [Recipe.disease_tag.contains(tag) for tag in target_tags]
+        candidates = db.query(Recipe).filter(or_(*filter_conditions)).all()
+        
+        if not candidates:
+            candidates = db.query(Recipe).filter(Recipe.disease_tag == "일반건강").all()
+
+        # [2단계] Content-Based Scoring (취향 기반 가중치 부여)
+        scored_recipes = []
+        liked_recipe_ids = []
+        disliked_recipe_ids = []
+        try:
+            # 최근 14일간 식단 기록 조회
+            two_weeks_ago = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
+            
+            recent_records = db.query(MealRecord)\
+                .filter(MealRecord.user_id == user_id, MealRecord.date >= two_weeks_ago)\
+                .all()
+            
+            # 선호 키워드 추출 (직접 menu 컬럼 사용)
+            preference_keywords = {}
+            for record in recent_records:
+                if record.menu:
+                    # 메뉴명에서 키워드 추출
+                    words = str(record.menu).split()
+                    for w in words:
+                        if len(w) > 1:
+                             preference_keywords[w] = preference_keywords.get(w, 0) + 1
+                    
+            # 2-2. [NEW] 직접적인 좋아요/싫어요 피드백 반영
+            user_prefs = db.query(UserPreference).filter(UserPreference.user_id == user_id).all()
+            liked_recipe_ids = [p.recipe_id for p in user_prefs if p.preference == 'like']
+            disliked_recipe_ids = [p.recipe_id for p in user_prefs if p.preference == 'dislike']
+
+            print(f"🧐 유저 선호 키워드 Top 5: {sorted(preference_keywords.items(), key=lambda x:x[1], reverse=True)[:5]}")
+            print(f"❤️ 좋아요한 레시피 ID: {liked_recipe_ids}")
+
+            # 점수 계산
+            for recipe in candidates:
+                # 싫어요한 레시피는 제외 (또는 점수 대폭 깎기)
+                if recipe.id in disliked_recipe_ids:
+                    continue
+
+                score = 0
+                
+                # 좋아요한 레시피 가산점 (강력함)
+                if recipe.id in liked_recipe_ids:
+                    score += 50 
+
+                content_text = (str(recipe.name) + " " + str(recipe.ingredients or "")).replace(",", " ")
+                
+                for keyword, count in preference_keywords.items():
+                    if keyword in content_text:
+                        score += (count * 1.5)
+                
+                score += (recipe.id * 0.1)
+                scored_recipes.append({"score": score, "recipe": recipe})
+                
+            # 점수 내림차순 정렬
+            scored_recipes.sort(key=lambda x: x["score"], reverse=True)
+            final_recommendations = [item["recipe"] for item in scored_recipes]
+
+        except Exception as e:
+            print(f"⚠️ 추천 알고리즘 에러 (기본 결과 반환): {e}")
+            final_recommendations = candidates
+
+        # [수동 변환] Pydantic 검증 에러 회피를 위해 dict로 변환
+        final_results_json = []
+        for r in final_recommendations:
+            final_results_json.append({
+                "id": r.id,
+                "name": r.name,
+                "description": r.description or "",
+                "image_url": r.image_url or "",
+                "disease_tag": r.disease_tag or "",
+                "category": r.category or "",
+                "diet_type": r.diet_type or "",
+                "ingredients": r.ingredients or "",
+                "instructions": r.instructions or "", # [New]
+                "time_minutes": r.time_minutes or 20,
+                "calories": r.calories or 0,
+                "carbs": r.carbs or 0.0,
+                "protein": r.protein or 0.0,
+                "fat": r.fat or 0.0,
+                "sodium": r.sodium or 0.0,
+                "is_liked": r.id in liked_recipe_ids # [New] 좋아요 여부 매핑
+            })
+
+        print(f"✅ 최종 추천 결과({len(final_results_json)}개) 반환")
+        return {
+            "user_condition": ", ".join(target_tags), 
+            "recommendations": final_results_json
+        }
+    except Exception as e:
+        error_msg = f"CRITICAL ERROR: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})

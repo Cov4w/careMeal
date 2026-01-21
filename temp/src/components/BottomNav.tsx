@@ -1,8 +1,8 @@
 
 import React from 'react';
-import { Home, Calendar, Utensils, User } from 'lucide-react';
+import { Home, Calendar, MessageCircle, Utensils, User } from 'lucide-react';
 
-export type TabId = 'home' | 'mealRecord' | 'customDiet' | 'mypage';
+export type TabId = 'home' | 'mealRecord' | 'chatbot' | 'customDiet' | 'mypage';
 
 interface BottomNavProps {
   activeTab: TabId;
@@ -13,6 +13,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) => {
   const navItems = [
     { id: 'home', label: '홈', icon: Home },
     { id: 'mealRecord', label: '식단기록', icon: Calendar },
+    { id: 'chatbot', label: '챗봇', icon: MessageCircle },
     { id: 'customDiet', label: '맞춤식단', icon: Utensils },
     { id: 'mypage', label: '마이페이지', icon: User },
   ];
