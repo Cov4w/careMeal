@@ -14,7 +14,7 @@ import { DailyMealPlan, MealItem } from './types';
 import RecipeDetail from './components/RecipeDetail'; // [New]
 import { Recipe } from '@/services/api'; // [New]
 
-export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage' | 'recipe-detail' | 'chatbot';
+export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage' | 'mypage-report' | 'recipe-detail' | 'chatbot';
 
 export interface BloodSugarEntry {
   fasting?: number;
@@ -275,7 +275,13 @@ const App: React.FC = () => {
               />
             )}
 
-            {currentView === 'mypage' && <MyPage diagnosisData={diagnosisData} onLogout={handleLogout} />}
+            {(currentView === 'mypage' || currentView === 'mypage-report') && (
+              <MyPage
+                diagnosisData={diagnosisData}
+                onLogout={handleLogout}
+                initialShowReport={currentView === 'mypage-report'}
+              />
+            )}
           </div>
 
           {currentView !== 'chat' && (
