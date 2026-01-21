@@ -1,25 +1,31 @@
-
 import React, { useState } from 'react';
 import { User, Settings, Bell, ChevronRight, Activity, TrendingUp, Calendar, ClipboardCheck, LogOut } from 'lucide-react';
 import { DiagnosisResult } from './Diagnosis';
 import DiagnosisResultView from './DiagnosisResultView';
+import SettingsView from './SettingsView';
 
 interface MyPageProps {
   diagnosisData: DiagnosisResult | null;
   onLogout: () => void;
   onDiagnosisUpdate?: () => void;
+  initialShowReport?: boolean;
 }
 
-const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpdate }) => {
-  const [showFullReport, setShowFullReport] = useState(false);
+const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpdate, initialShowReport = false }) => {
+  const [showFullReport, setShowFullReport] = useState(initialShowReport);
+  const [showSettings, setShowSettings] = useState(false);
 
   if (showFullReport && diagnosisData) {
     return <DiagnosisResultView
       data={diagnosisData}
       onClose={() => setShowFullReport(false)}
       onRetry={() => { }}
-      onUpdate={onDiagnosisUpdate} // Pass to child
+      onUpdate={onDiagnosisUpdate}
     />;
+  }
+
+  if (showSettings) {
+    return <SettingsView onBack={() => setShowSettings(false)} />;
   }
 
   const stats = [
@@ -42,7 +48,10 @@ const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpd
               <p className="text-sm text-gray-500">{diagnosisData?.name === '김테스트' ? '테스트 계정 모드' : 'CareMeal 프리미엄 회원'}</p>
             </div>
           </div>
-          <button className="p-2 bg-gray-50 rounded-full text-gray-400 active:scale-90 transition-transform hover:text-primary">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-2 bg-gray-50 rounded-full text-gray-400 active:scale-90 transition-transform hover:text-primary"
+          >
             <Settings size={20} />
           </button>
         </div>
@@ -84,7 +93,10 @@ const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpd
         <div>
           <h3 className="text-xs font-black text-gray-400 ml-1 mb-3 uppercase tracking-wider opacity-60">계정 및 설정</h3>
           <div className="space-y-3">
-            <div className="bg-white p-5 rounded-[24px] flex items-center justify-between shadow-sm border border-gray-100 cursor-pointer active:bg-gray-50 transition-colors">
+            <div
+              onClick={() => setShowSettings(true)}
+              className="bg-white p-5 rounded-[24px] flex items-center justify-between shadow-sm border border-gray-100 cursor-pointer active:bg-gray-50 transition-colors"
+            >
               <div className="flex items-center space-x-3">
                 <div className="p-2 bg-blue-50 rounded-xl text-blue-500">
                   <Bell size={20} />

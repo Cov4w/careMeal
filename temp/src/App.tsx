@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import Home from '@/components/Home';
 import ChatInterface from '@/components/ChatInterface';
@@ -8,13 +7,13 @@ import MyPage from '@/components/MyPage';
 import BottomNav from '@/components/BottomNav';
 import Login from '@/components/Login';
 import { DiagnosisResult } from '@/components/Diagnosis';
-import { analyzeFoodImage, fetchMealRecord, saveMealRecord, MealRecordData, fetchRecommendedRecipes } from '@/services/api'; // [Mod]
+import { analyzeFoodImage, fetchMealRecord, saveMealRecord, MealRecordData, fetchRecommendedRecipes } from '@/services/api';
 import { DailyMealPlan, MealItem } from './types';
 
 import RecipeDetail from './components/RecipeDetail'; // [New]
 import { Recipe } from '@/services/api'; // [New]
 
-export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage' | 'recipe-detail' | 'chatbot';
+export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage' | 'mypage-report' | 'recipe-detail' | 'chatbot';
 
 export interface BloodSugarEntry {
   fasting?: number;
@@ -306,11 +305,12 @@ const App: React.FC = () => {
               />
             )}
 
-            {currentView === 'mypage' && (
+            {(currentView === 'mypage' || currentView === 'mypage-report') && (
               <MyPage
                 diagnosisData={diagnosisData}
                 onLogout={handleLogout}
                 onDiagnosisUpdate={fetchLatestDiagnosis}
+                initialShowReport={currentView === 'mypage-report'}
               />
             )}
           </div>

@@ -48,6 +48,7 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
 }) => {
   const [step, setStep] = useState(1);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
 
   // 총 7단계 (1:기본, 2:생활습관, 3:질환선택, 4:질환상세, 5:건강수치, 6:식습관/목표, 7:동의)
   const totalSteps = 7;
@@ -86,6 +87,9 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
       bloodSugar: '',
       bloodPressure: '',
       cholesterol: '',
+      bloodSugarUnknown: false,
+      bloodPressureUnknown: false,
+      cholesterolUnknown: false,
     },
     // 생활 습관 (Step 1에서 수집)
     lifestyle: {
@@ -148,6 +152,21 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
     if (step === 3 && (selectedConditions.includes('일반건강') && selectedConditions.length === 1)) {
       setStep(5); // 4(질환상세) 건너뛰고 5(건강수치)로
       return;
+    }
+
+    if (step === 5) {
+      const {
+        bloodSugar, bloodPressure, cholesterol,
+        bloodSugarUnknown, bloodPressureUnknown, cholesterolUnknown
+      } = formData.healthMetrics;
+
+      const isBloodSugarValid = bloodSugarUnknown || bloodSugar;
+      const isBloodPressureValid = bloodPressureUnknown || bloodPressure;
+      const isCholesterolValid = cholesterolUnknown || cholesterol;
+
+      if (!isBloodSugarValid || !isBloodPressureValid || !isCholesterolValid) {
+        return alert("모든 건강 지표를 입력하시거나, 각 항목의 '모름'에 체크해주세요.");
+      }
     }
 
     if (step === 6 && (!formData.eatingHabits.veggieFrequency || !formData.eatingHabits.sugarIntake || !formData.eatingHabits.meatType || !formData.eatingHabits.saltLevel)) {
@@ -397,27 +416,41 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
         {step === 4 && (
           <div className="space-y-6 animate-fadeIn">
             <h2 className="text-xl font-black text-gray-900">4️⃣ 질환별 정밀 정보</h2>
-            <p className="text-xs text-gray-400 -mt-4">선택하신 질환의 상세 관리 상태를 알려주세요.</p>
+            <p className="text-sm text-gray-900 -mt-4">선택하신 질환의 상세 관리 상태를 알려주세요.</p>
 
             <div className="space-y-6">
               {/* 고혈압 상세 */}
               {selectedConditions.includes('고혈압') && (
                 <div className="bg-white p-6 rounded-[28px] border border-rose-100 shadow-sm space-y-4">
                   <div className="flex items-center space-x-2 text-rose-600 font-bold mb-2">
-                    <Activity size={18} /> <span>고혈압 정밀 정보</span>
+                    <Activity size={18} /> <span className="text-lg">고혈압 정밀 정보</span>
                   </div>
                   <div className="space-y-3">
                     <MultiSelect
                       label="💊 현재 복용 중인 혈압약 (중복 선택)"
+                      labelClassName="text-base text-gray-900"
                       options={['ACE억제제/ARB', '칼슘채널차단제(CCB)', '이뇨제', '베타차단제', '복합제', '약물 복용 안함']}
                       values={formData.diseaseDetails.hypertension.meds}
-                      onChange={(v: string[]) => setFormData({
-                        ...formData,
-                        diseaseDetails: {
-                          ...formData.diseaseDetails,
-                          hypertension: { ...formData.diseaseDetails.hypertension, meds: v }
+                      onChange={(v: string[]) => {
+                        const prevMeds = formData.diseaseDetails.hypertension.meds;
+                        const isNoMeds = v.includes('약물 복용 안함');
+                        const wasNoMeds = prevMeds.includes('약물 복용 안함');
+
+                        let nextMeds = v;
+                        if (isNoMeds && !wasNoMeds) {
+                          nextMeds = ['약물 복용 안함'];
+                        } else if (isNoMeds && v.length > 1) {
+                          nextMeds = v.filter(m => m !== '약물 복용 안함');
                         }
-                      })}
+
+                        setFormData({
+                          ...formData,
+                          diseaseDetails: {
+                            ...formData.diseaseDetails,
+                            hypertension: { ...formData.diseaseDetails.hypertension, meds: nextMeds }
+                          }
+                        });
+                      }}
                     />
                     <div className="flex items-center space-x-2">
                       <input
@@ -433,7 +466,7 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
                         })}
                         className="w-4 h-4 text-primary rounded focus:ring-primary"
                       />
-                      <label htmlFor="medsUnknown" className="text-sm text-gray-500 font-medium">약 종류를 잘 모름</label>
+                      <label htmlFor="medsUnknown" className="text-base font-bold text-gray-900 ml-1 cursor-pointer">약 종류를 잘 모름</label>
                     </div>
                   </div>
                 </div>
@@ -443,23 +476,25 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
               {selectedConditions.includes('당뇨병') && (
                 <div className="bg-white p-6 rounded-[28px] border border-blue-100 shadow-sm space-y-6">
                   <div className="flex items-center space-x-2 text-blue-600 font-bold mb-2">
-                    <Droplets size={18} /> <span>당뇨병 정밀 정보</span>
+                    <Droplets size={18} /> <span className="text-lg">당뇨병 정밀 정보</span>
                   </div>
 
                   <MultiSelect
                     label="📋 진단 상태 (중복 선택)"
+                    labelClassName="text-base text-gray-900"
                     options={['당뇨 전단계', '제2형 당뇨병(성인)', '제1형 당뇨병(소아)', '임신성 당뇨병']}
                     values={formData.diseaseDetails.diabetes.type}
                     onChange={(v: string[]) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, type: v } } })}
                   />
 
                   <div className="grid grid-cols-2 gap-4">
-                    <Input label="당화혈색소 (%)" value={formData.diseaseDetails.diabetes.hbA1c} onChange={(v: string) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, hbA1c: v } } })} type="number" placeholder="예: 6.5" />
-                    <Input label="평균 공복 혈당 (mg/dL)" value={formData.diseaseDetails.diabetes.bloodSugar} onChange={(v: string) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, bloodSugar: v } } })} type="number" placeholder="예: 110" />
+                    <Input label="당화혈색소 (%)" labelClassName="text-base text-gray-900" value={formData.diseaseDetails.diabetes.hbA1c} onChange={(v: string) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, hbA1c: v } } })} type="number" placeholder="예: 6.5" />
+                    <Input label="평균 공복 혈당 (mg/dL)" labelClassName="text-base text-gray-900" value={formData.diseaseDetails.diabetes.bloodSugar} onChange={(v: string) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, bloodSugar: v } } })} type="number" placeholder="예: 110" />
                   </div>
 
                   <MultiSelect
                     label="💉 치료 방식 (중복 선택)"
+                    labelClassName="text-base text-gray-900"
                     options={['생활습관 관리', '경구약 복용', '인슐린 주사', '인슐린 펌프']}
                     values={formData.diseaseDetails.diabetes.treatment}
                     onChange={(v: string[]) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, treatment: v } } })}
@@ -467,20 +502,24 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
 
                   <HabitSelect
                     label="⚠️ 저혈당 유발 약물/인슐린 사용 여부"
+                    labelClassName="text-gray-900"
                     options={['예', '아니오', '잘 모름']}
                     value={formData.diseaseDetails.diabetes.hypoRisk}
                     onChange={(v: string) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, hypoRisk: v } } })}
+                    enlarged
                   />
 
                   <HabitSelect
                     label="😵 평소 저혈당 증상 경험"
+                    labelClassName="text-gray-900"
                     options={['자주 있음', '가끔 있음', '없음']}
                     value={formData.diseaseDetails.diabetes.hypoSymptoms}
                     onChange={(v: string) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, hypoSymptoms: v } } })}
+                    enlarged
                   />
 
-                  <div className="space-y-2">
-                    <p className="text-xs text-gray-400 font-bold ml-1">🕒 관리가 가장 안 되는 시간</p>
+                  <div className="space-y-3">
+                    <p className="text-base text-gray-900 font-bold ml-1">🕒 관리가 가장 안 되는 시간</p>
                     <div className="flex flex-wrap gap-2">
                       {['아침 공복', '점심 식후', '저녁 식후', '잠들기 전'].map((time) => (
                         <button
@@ -490,7 +529,7 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
                             const next = current.includes(time) ? current.filter((t: string) => t !== time) : [...current, time];
                             setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, diabetes: { ...formData.diseaseDetails.diabetes, weakTimes: next } } })
                           }}
-                          className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all ${formData.diseaseDetails.diabetes.weakTimes.includes(time) ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-gray-50 border-gray-100 text-gray-500'}`}
+                          className={`px-4 py-2.5 rounded-xl text-sm font-bold border transition-all ${formData.diseaseDetails.diabetes.weakTimes.includes(time) ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-gray-50 border-gray-100 text-gray-500'}`}
                         >
                           {time}
                         </button>
@@ -504,21 +543,22 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
               {selectedConditions.includes('신부전') && (
                 <div className="bg-white p-6 rounded-[28px] border border-purple-100 shadow-sm space-y-4">
                   <div className="flex items-center space-x-2 text-purple-600 font-bold mb-2">
-                    <Stethoscope size={18} /> <span>신부전 상세 정보</span>
+                    <Stethoscope size={18} /> <span className="text-lg">신부전 상세 정보</span>
                   </div>
                   <MultiSelect
                     label="상세 질환 선택 (중복 가능)"
+                    labelClassName="text-base text-gray-900"
                     options={['만성 콩팥병(신장질환)', '이상지질혈증(고지혈증)', '고요산혈증/통풍', '심부전/심혈관질환']}
                     values={formData.diseaseDetails.kidney.conditions}
                     onChange={(v: string[]) => setFormData({ ...formData, diseaseDetails: { ...formData.diseaseDetails, kidney: { ...formData.diseaseDetails.kidney, conditions: v } } })}
                   />
-                  <p className="text-[10px] text-gray-400">* 선택하신 질환에 따라 나트륨, 단백질, 칼륨 제한 식이 가이드가 적용됩니다.</p>
+
                 </div>
               )}
 
               {(!selectedConditions.some(c => ['당뇨병', '고혈압', '신부전'].includes(c))) && (
                 <div className="bg-gray-50 p-10 rounded-[28px] text-center border-2 border-dashed border-gray-200">
-                  <p className="text-sm text-gray-400 font-bold">선택하신 질환에 대한 추가 문진이 필요 없습니다.<br />다음 단계로 이동해주세요.</p>
+                  <p className="text-base text-gray-900 font-bold">선택하신 질환에 대한 추가 문진이 필요 없습니다.<br />다음 단계로 이동해주세요.</p>
                 </div>
               )}
             </div>
@@ -528,10 +568,85 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
         {step === 5 && (
           <div className="space-y-6 animate-fadeIn">
             <h2 className="text-2xl font-black text-gray-900">5️⃣ 건강 지표 기록</h2>
-            <div className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm space-y-5">
-              <Input label="공복 혈당 (mg/dL)" value={formData.healthMetrics.bloodSugar} onChange={(v: string) => setFormData({ ...formData, healthMetrics: { ...formData.healthMetrics, bloodSugar: v } })} type="number" placeholder="95" />
-              <Input label="수축기 혈압 (mmHg)" value={formData.healthMetrics.bloodPressure} onChange={(v: string) => setFormData({ ...formData, healthMetrics: { ...formData.healthMetrics, bloodPressure: v } })} type="number" placeholder="120" />
-              <Input label="총 콜레스테롤 (mg/dL)" value={formData.healthMetrics.cholesterol} onChange={(v: string) => setFormData({ ...formData, healthMetrics: { ...formData.healthMetrics, cholesterol: v } })} type="number" placeholder="190" />
+            <div className="bg-white p-6 rounded-[28px] border border-gray-100 shadow-sm space-y-6">
+              {/* 공복 혈당 */}
+              <Input
+                label="공복 혈당 (mg/dL)"
+                labelClassName="text-base text-gray-900"
+                value={formData.healthMetrics.bloodSugar}
+                onChange={(v: string) => setFormData({ ...formData, healthMetrics: { ...formData.healthMetrics, bloodSugar: v } })}
+                type="number"
+                placeholder="95"
+                labelSuffix={
+                  <div className="flex items-center space-x-1.5 bg-gray-50 px-2 py-1 rounded-lg">
+                    <input
+                      type="checkbox"
+                      id="bloodSugarUnknown"
+                      checked={formData.healthMetrics.bloodSugarUnknown}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        healthMetrics: { ...formData.healthMetrics, bloodSugarUnknown: e.target.checked }
+                      })}
+                      className="w-4 h-4 text-primary rounded focus:ring-primary"
+                    />
+                    <label htmlFor="bloodSugarUnknown" className="text-sm font-bold text-gray-900 cursor-pointer">모름</label>
+                  </div>
+                }
+              />
+
+              {/* 수축기 혈압 */}
+              <Input
+                label="수축기 혈압 (mmHg)"
+                labelClassName="text-base text-gray-900"
+                value={formData.healthMetrics.bloodPressure}
+                onChange={(v: string) => setFormData({ ...formData, healthMetrics: { ...formData.healthMetrics, bloodPressure: v } })}
+                type="number"
+                placeholder="120"
+                labelSuffix={
+                  <div className="flex items-center space-x-1.5 bg-gray-50 px-2 py-1 rounded-lg">
+                    <input
+                      type="checkbox"
+                      id="bloodPressureUnknown"
+                      checked={formData.healthMetrics.bloodPressureUnknown}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        healthMetrics: { ...formData.healthMetrics, bloodPressureUnknown: e.target.checked }
+                      })}
+                      className="w-4 h-4 text-primary rounded focus:ring-primary"
+                    />
+                    <label htmlFor="bloodPressureUnknown" className="text-sm font-bold text-gray-900 cursor-pointer">모름</label>
+                  </div>
+                }
+              />
+
+              {/* 총 콜레스테롤 */}
+              <Input
+                label="총 콜레스테롤 (mg/dL)"
+                labelClassName="text-base text-gray-900"
+                value={formData.healthMetrics.cholesterol}
+                onChange={(v: string) => setFormData({ ...formData, healthMetrics: { ...formData.healthMetrics, cholesterol: v } })}
+                type="number"
+                placeholder="190"
+                labelSuffix={
+                  <div className="flex items-center space-x-1.5 bg-gray-50 px-2 py-1 rounded-lg">
+                    <input
+                      type="checkbox"
+                      id="cholesterolUnknown"
+                      checked={formData.healthMetrics.cholesterolUnknown}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        healthMetrics: { ...formData.healthMetrics, cholesterolUnknown: e.target.checked }
+                      })}
+                      className="w-4 h-4 text-primary rounded focus:ring-primary"
+                    />
+                    <label htmlFor="cholesterolUnknown" className="text-sm font-bold text-gray-900 cursor-pointer">모름</label>
+                  </div>
+                }
+              />
+
+              <div className="pt-2 border-t border-gray-50">
+                <p className="text-[10px] text-gray-400 ml-1">* 정보를 입력하지 않으시면 일반적인 가이드가 제공됩니다.</p>
+              </div>
             </div>
           </div>
         )}
@@ -567,8 +682,86 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
             <h2 className="text-2xl font-black text-gray-900">분석 준비 완료!</h2>
             <p className="text-sm text-gray-400">입력하신 소중한 정보를 바탕으로<br />{formData.name}님만을 위한 맞춤 리포트를 생성합니다.</p>
             <div className="space-y-3 mt-8">
-              <ConsentItem label="건강 정보 활용 및 분석에 동의합니다 (필수)" checked={formData.consentHealth} onChange={(v: boolean) => setFormData({ ...formData, consentHealth: v })} />
-              <ConsentItem label="AI 기반 영양 가이드 제공에 동의합니다 (필수)" checked={formData.consentAI} onChange={(v: boolean) => setFormData({ ...formData, consentAI: v })} />
+              <ConsentItem
+                label="건강 정보 활용 및 분석에 동의합니다 (필수)"
+                checked={formData.consentHealth}
+                onChange={(v: boolean) => setFormData({ ...formData, consentHealth: v })}
+                onShowDetail={() => setShowPrivacyPolicy(true)}
+              />
+              <ConsentItem
+                label="AI 기반 영양 가이드 제공에 동의합니다 (필수)"
+                checked={formData.consentAI}
+                onChange={(v: boolean) => setFormData({ ...formData, consentAI: v })}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Privacy Policy Modal */}
+        {showPrivacyPolicy && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-5 animate-fadeIn">
+            <div className="bg-white w-full max-w-sm max-h-[80vh] rounded-[28px] overflow-hidden flex flex-col shadow-2xl animate-scaleIn">
+              <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-white sticky top-0 z-10">
+                <h3 className="font-bold text-lg text-gray-900">개인정보 처리방침</h3>
+                <button onClick={() => setShowPrivacyPolicy(false)} className="p-2 -mr-2 text-gray-400 hover:text-gray-600">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+              </div>
+              <div className="p-6 overflow-y-auto leading-relaxed text-sm text-gray-600 space-y-4">
+                <div className="prose prose-sm max-w-none">
+                  <p className="font-bold text-gray-900 mb-2">[CareMeal] 개인정보 처리방침</p>
+
+                  <strong className="block text-gray-800 mt-4 mb-2">제1조 (수집하는 개인정보 항목)</strong>
+                  <p>회사는 이용자의 동의를 얻어 서비스 제공에 필요한 최소한의 개인정보를 수집합니다.</p>
+                  <ul className="list-disc pl-4 space-y-1 mt-2 bg-gray-50 p-3 rounded-xl text-xs">
+                    <li><strong>회원 가입 및 주문 시 (필수):</strong> 이름, 생년월일, 성별, 이메일, 휴대전화번호 등</li>
+                    <li><strong>영양진단 서비스 이용 시 (민감정보):</strong> 키, 몸무게, 활동량, 주 진단 질환, 혈당/혈압 수치, 복용 약물, 알레르기 정보, 식사 및 건강 기록 등</li>
+                    <li><strong>서비스 이용 기록 (자동 수집):</strong> 쿠키(Cookie), 접속 로그, 기기 정보(OS 종류 및 버전, 디바이스 종류), 이용 시간, 검색 및 방문 기록 등</li>
+                  </ul>
+
+                  <strong className="block text-gray-800 mt-4 mb-2">제2조 (개인정보의 처리 및 보유 기간)</strong>
+                  <ul className="space-y-2 text-xs">
+                    <li><span className="font-bold text-gray-700">영양진단 서비스 (회원):</span> 회원 탈퇴 시 혹은 결과 삭제 시 즉시 파기합니다.</li>
+                    <li><span className="font-bold text-gray-700">영양진단 서비스 (비회원):</span> 서비스 제공 후 즉시 파기합니다.</li>
+                    <li><span className="font-bold text-gray-700">일반 회원 정보:</span> 이용자가 계정 삭제를 요청할 때까지 보유하며, 관련 법령(전자상거래법 등)에 따라 보존이 필요한 경우 해당 기간 동안 보관합니다.</li>
+                  </ul>
+
+                  <strong className="block text-gray-800 mt-4 mb-2">제3조 (개인정보의 파기 절차 및 방법)</strong>
+                  <p><strong>파기 절차:</strong> 목적이 달성된 정보는 별도의 DB로 옮겨져 일정 기간 저장된 후 파기됩니다.</p>
+                  <p className="mt-1"><strong>파기 방법:</strong> 전자적 파일 형태의 정보는 기록을 재생할 수 없는 기술적 방법을 사용하여 삭제하며, 남은 데이터는 특정 개인을 식별할 수 없는 방법으로 익명 처리합니다.</p>
+
+                  <strong className="block text-gray-800 mt-4 mb-2">제4조 (개인정보의 국외 이전 및 처리 위탁)</strong>
+                  <p>회사는 서비스의 안정성을 위해 클라우드 서버를 이용하며, 개인정보가 국외로 이전될 수 있습니다.</p>
+                  <div className="bg-gray-50 p-3 rounded-xl mt-2 text-xs space-y-1">
+                    <p><strong>이전 받는 자:</strong> Amazon Web Services (AWS)</p>
+                    <p><strong>이전 국가:</strong> 일본</p>
+                    <p><strong>이전 항목:</strong> 서비스 내에 입력되거나 수집된 모든 정보</p>
+                    <p><strong>보안 프로토콜:</strong> 데이터 전송 시 TLS 1.2 이상 또는 더 안전한 암호화 프로토콜을 사용합니다.</p>
+                  </div>
+
+                  <strong className="block text-gray-800 mt-4 mb-2">제5조 (정보주체의 권리 및 행사방법)</strong>
+                  <p>이용자는 언제든지 다음과 같은 권리를 행사할 수 있습니다.</p>
+                  <ul className="list-disc pl-4 space-y-1 mt-1 text-xs">
+                    <li>개인정보 열람 및 사본 제공 요구</li>
+                    <li>오류가 있을 경우 정정 및 삭제 요구</li>
+                    <li>개인정보 처리 정지 및 동의 철회 요구</li>
+                    <li><strong>프로파일링을 포함한 자동화된 결정 거부:</strong> AI 기반의 자동화된 결과에 대해 거부를 요청하거나 설명을 요구할 수 있습니다.</li>
+                  </ul>
+
+                  <strong className="block text-gray-800 mt-4 mb-2">제6조 (안전성 확보 조치)</strong>
+                  <p>회사는 개인정보 보호를 위해 기술적, 관리적, 물리적 보안 대책을 시행합니다.</p>
+                  <ul className="text-xs space-y-1 mt-2">
+                    <li>• <strong>관리적 조치:</strong> 개인정보 보호책임자 지정, 내부 관리계획 수립 및 시행, 정기적 직원 교육</li>
+                    <li>• <strong>기술적 조치:</strong> 접근 권한 관리, 접근 통제 시스템 설치, 고유식별정보의 암호화 저장, 보안 프로그램 설치</li>
+                    <li>• <strong>물리적 조치:</strong> 전산실, 자료 보관실 등 개인정보 보관 장소에 대한 출입 통제</li>
+                  </ul>
+                </div>
+              </div>
+              <div className="p-4 border-t border-gray-100 bg-gray-50">
+                <button onClick={() => setShowPrivacyPolicy(false)} className="w-full bg-primary text-white font-bold py-3.5 rounded-xl active:scale-[0.98] transition-transform">
+                  확인했습니다
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -598,16 +791,19 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
   );
 };
 
-const Input = ({ label, value, onChange, type = "text", placeholder = "", icon }: any) => (
+const Input = ({ label, value, onChange, type = "text", placeholder = "", icon, labelClassName = "text-gray-400", labelSuffix }: any) => (
   <div className="space-y-1">
-    <label className="text-xs text-gray-400 font-bold ml-1 flex items-center">{icon && <span className="mr-1 text-primary">{icon}</span>}{label}</label>
+    <div className="flex items-center justify-between mr-1">
+      <label className={`text-xs font-bold ml-1 flex items-center ${labelClassName}`}>{icon && <span className="mr-1 text-primary">{icon}</span>}{label}</label>
+      {labelSuffix}
+    </div>
     <input type={type} value={value} onChange={(e) => onChange(e.target.value)} onWheel={(e) => (e.target as HTMLInputElement).blur()} placeholder={placeholder} className="w-full p-4 bg-gray-50 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 font-bold text-gray-800" />
   </div>
 );
 
-const HabitSelect = ({ label, options, value, onChange, enlarged = false }: any) => (
+const HabitSelect = ({ label, options, value, onChange, enlarged = false, labelClassName = "text-gray-400" }: any) => (
   <div className={enlarged ? "space-y-3" : "space-y-2"}>
-    <p className={`font-bold ml-1 ${enlarged ? 'text-base text-gray-700' : 'text-xs text-gray-400'}`}>
+    <p className={`font-bold ml-1 ${enlarged ? 'text-base text-gray-700' : 'text-xs ' + labelClassName}`}>
       {label}
     </p>
 
@@ -630,7 +826,7 @@ const HabitSelect = ({ label, options, value, onChange, enlarged = false }: any)
 );
 
 
-const MultiSelect = ({ label, options, values, onChange }: any) => {
+const MultiSelect = ({ label, options, values, onChange, labelClassName = "text-gray-400" }: any) => {
   const toggleOption = (opt: string) => {
     if (values.includes(opt)) {
       onChange(values.filter((v: string) => v !== opt));
@@ -641,7 +837,7 @@ const MultiSelect = ({ label, options, values, onChange }: any) => {
 
   return (
     <div className="space-y-2">
-      <p className="text-xs text-gray-400 font-bold ml-1">{label}</p>
+      <p className={`text-xs font-bold ml-1 ${labelClassName}`}>{label}</p>
       <div className="flex flex-wrap gap-2">
         {options.map((opt: string) => (
           <button
@@ -649,7 +845,7 @@ const MultiSelect = ({ label, options, values, onChange }: any) => {
             onClick={() => toggleOption(opt)}
             className={`px-4 py-2.5 rounded-xl font-bold transition-all border-2 text-sm ${values.includes(opt)
               ? 'border-primary bg-primary/5 text-primary shadow-sm'
-              : 'border-gray-100 bg-white text-gray-400 hover:border-gray-200'
+              : 'border-gray-100 bg-white text-gray-900 hover:border-gray-200'
               }`}
           >
             <span className="flex items-center gap-2">
@@ -663,11 +859,27 @@ const MultiSelect = ({ label, options, values, onChange }: any) => {
   );
 };
 
-const ConsentItem = ({ label, checked, onChange }: any) => (
-  <button onClick={() => onChange(!checked)} className={`w-full p-4 rounded-2xl border-2 flex items-center text-left transition-all ${checked ? 'border-primary bg-primary/5' : 'border-gray-50 bg-white'}`}>
-    <div className={`w-5 h-5 rounded-md border-2 mr-3 flex items-center justify-center ${checked ? 'bg-primary border-primary text-white' : 'border-gray-200'}`}>{checked && <CheckCircle2 size={12} />}</div>
-    <span className="text-xs font-bold text-gray-700">{label}</span>
-  </button>
+const ConsentItem = ({ label, checked, onChange, onShowDetail }: any) => (
+  <div className={`w-full p-4 rounded-2xl border-2 flex items-center justify-between transition-all ${checked ? 'border-primary bg-primary/5' : 'border-gray-50 bg-white'}`}>
+    <div
+      onClick={() => onChange(!checked)}
+      className="flex items-center text-left flex-1 cursor-pointer"
+    >
+      <div className={`w-5 h-5 rounded-md border-2 mr-3 flex items-center justify-center ${checked ? 'bg-primary border-primary text-white' : 'border-gray-200'}`}>{checked && <CheckCircle2 size={12} />}</div>
+      <span className="text-xs font-bold text-gray-700">{label}</span>
+    </div>
+    {onShowDetail && (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onShowDetail();
+        }}
+        className="text-[10px] text-gray-400 underline ml-2 whitespace-nowrap p-2 hover:text-gray-600"
+      >
+        자세히보기
+      </button>
+    )}
+  </div>
 );
 
 const ScrollPicker = ({ label, value, options, onChange, unit = '' }: any) => {
