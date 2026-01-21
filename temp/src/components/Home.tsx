@@ -128,7 +128,7 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
                 <p className="text-lg font-black text-gray-900">{diagnosisData?.habitScore || 0}점</p>
               </div>
             </div>
-            <button onClick={() => onTabChange('mypage')} className="text-xs font-bold text-primary flex items-center">리포트 보기 <ChevronRight size={14} /></button>
+            <button onClick={() => onTabChange('mypage-report')} className="text-xs font-bold text-primary flex items-center">리포트 보기 <ChevronRight size={14} /></button>
           </div>
         </div>
       </div>

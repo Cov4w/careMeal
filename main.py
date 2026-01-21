@@ -10,6 +10,7 @@ import os
 import re
 import traceback
 from dotenv import load_dotenv
+import torch
 
 # --- [NEW] Local AI & Database Stack & RAG ---
 from sqlalchemy import create_engine, Column, String, Integer, JSON, Text, DateTime, Float, ForeignKey
@@ -24,7 +25,11 @@ from langchain_community.vectorstores import Chroma
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 # 환경 변수 로드
-load_dotenv()
+# 환경 변수 로드
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+load_status = load_dotenv(env_path)
+print(f"📂 Loading .env from: {env_path} (Success: {load_status})")
+
 
 from fastapi.staticfiles import StaticFiles
 
@@ -256,10 +261,19 @@ async def startup_event():
     global vector_store, retriever
     print("🚀 [Startup] RAG 시스템 초기화 중...")
     
-    # 1. 임베딩 모델 로드 (Mac M3 가속: MPS) - 한국어 특화 모델 적용
+    # 1. 임베딩 모델 로드 (Mac M3 가속: MPS, CUDA: NVIDIA, CPU: Fallback)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    try:
+        if torch.backends.mps.is_available():
+            device = "mps"
+    except:
+        pass
+
+    print(f"🖥️ AI Device: {device}")
+
     embeddings = HuggingFaceEmbeddings(
         model_name="jhgan/ko-sbert-nli",
-        model_kwargs={'device': 'mps'}
+        model_kwargs={'device': device}
     )
     
     persist_directory = "./chroma_db"
@@ -841,6 +855,8 @@ def get_recipe_recommendations(user_id: str, db: Session = Depends(get_db)):
 
         # [2단계] Content-Based Scoring (취향 기반 가중치 부여)
         scored_recipes = []
+        liked_recipe_ids = []
+        disliked_recipe_ids = []
         try:
             # 최근 14일간 식단 기록 조회
             two_weeks_ago = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
