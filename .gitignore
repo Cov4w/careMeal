@@ -3,8 +3,7 @@
 Thumbs.db
 careMeal_dev
 app.py
-seed_recipes.py
-WORK_ORDER_RECIPE_PAGE.md
+
 # Python
 __pycache__/
 *.py[cod]
@@ -23,12 +22,6 @@ yarn-error.log*
 # Logs and Data
 chat_log.csv
 *.log
-caremeal.db
-chroma_db/
-data/*
-!data/.gitkeep
-static/*
-!static/.gitkeep
 
 #temp
 # Logs
@@ -55,4 +48,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.envrc

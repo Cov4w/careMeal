@@ -120,7 +120,6 @@ const Login: React.FC<LoginProps> = ({ onLoginComplete }) => {
           selectedConditions={selectedConditions}
           onConditionsChange={(conditions) => setSelectedConditions(conditions)}
           initialName={authData.name}
-          onBack={() => setMode('login')}
         />
       </div>
     );
