@@ -8,13 +8,9 @@ import MyPage from '@/components/MyPage';
 import BottomNav from '@/components/BottomNav';
 import Login from '@/components/Login';
 import { DiagnosisResult } from '@/components/Diagnosis';
-import { analyzeFoodImage, fetchMealRecord, saveMealRecord, MealRecordData, fetchRecommendedRecipes } from '@/services/api'; // [Mod]
 import { DailyMealPlan, MealItem } from './types';
 
-import RecipeDetail from './components/RecipeDetail'; // [New]
-import { Recipe } from '@/services/api'; // [New]
-
-export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage' | 'mypage-report' | 'recipe-detail' | 'chatbot';
+export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage';
 
 export interface BloodSugarEntry {
   fasting?: number;
@@ -29,7 +25,6 @@ const App: React.FC = () => {
   });
 
   const [currentView, setCurrentView] = useState<ViewState>('home');
-  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null); // [New]
 
   const [diagnosisData, setDiagnosisData] = useState<DiagnosisResult | null>(() => {
     const saved = localStorage.getItem('caremeal_diagnosis_data');
@@ -72,7 +67,7 @@ const App: React.FC = () => {
     localStorage.setItem('caremeal_meal_plan_v2', JSON.stringify(mealData));
   }, [mealData]);
 
-  const handleUpdateMeal = (date: string, time: 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'lateNightSnack', item: MealItem) => {
+  const handleUpdateMeal = (date: string, time: 'breakfast' | 'lunch' | 'dinner', item: MealItem) => {
     setMealData(prev => ({
       ...prev,
       [date]: {
@@ -97,19 +92,6 @@ const App: React.FC = () => {
     localStorage.setItem('caremeal_logged_in', 'true');
     localStorage.setItem('caremeal_diagnosis_data', JSON.stringify(data));
     localStorage.setItem('caremeal_selected_conditions', JSON.stringify(data.conditions));
-
-    // [중요] userId 저장 (API 호출용)
-    if (data.userId) {
-      localStorage.setItem('userId', data.userId);
-    } else {
-      // userId가 없으면 이름이라도 ID로 사용 (혹은 임시 ID 생성)
-      const fallbackId = data.name || "guest_" + Math.random().toString(36).substr(2, 9);
-      localStorage.setItem('userId', fallbackId);
-      // data 객체에도 업데이트
-      data.userId = fallbackId;
-      localStorage.setItem('caremeal_diagnosis_data', JSON.stringify(data));
-    }
-
     setIsLoggedIn(true);
   };
 
@@ -130,32 +112,7 @@ const App: React.FC = () => {
 
   const handleTabChange = (view: ViewState) => {
     setInitialChatMessage('');
-    // chatbot 탭 클릭 시 chat 뷰로 이동
-    if (view === 'chatbot') {
-      setCurrentView('chat');
-    } else {
-      setCurrentView(view);
-    }
-  };
-
-  // [New] 채팅에서 레시피 선택 시 처리
-  const handleRecipeSelectFromChat = async (recipeId: number) => {
-    const userId = diagnosisData?.userId || 'guest';
-    try {
-      // 레시피 데이터가 App에 없으므로 서버에서 가져와서 찾음
-      const data = await fetchRecommendedRecipes(userId);
-      const targetRecipe = data.recommendations.find(r => r.id === recipeId);
-
-      if (targetRecipe) {
-        setSelectedRecipe(targetRecipe);
-        setCurrentView('recipe-detail');
-      } else {
-        alert("해당 레시피 정보를 찾을 수 없습니다.");
-      }
-    } catch (e) {
-      console.error("Failed to fetch recipe detail", e);
-      alert("레시피 정보를 불러오는 중 오류가 발생했습니다.");
-    }
+    setCurrentView(view);
   };
 
   if (!isLoggedIn) {
@@ -164,130 +121,52 @@ const App: React.FC = () => {
 
   return (
     <div className="h-[100dvh] w-full bg-white max-w-md mx-auto shadow-none sm:shadow-2xl overflow-hidden relative flex flex-col font-sans">
-      {!isLoggedIn ? (
-        <Login onLoginComplete={handleLogin} />
-      ) : (
-        <>
-          <div className="flex-1 overflow-hidden relative">
-            {currentView === 'home' && (
-              <Home
-                diagnosisData={diagnosisData}
-                bloodSugarHistory={bloodSugarHistory}
-                onOpenChat={handleOpenChat}
-                onTabChange={handleTabChange}
-              />
-            )}
+      <div className="flex-1 overflow-hidden relative">
+        {currentView === 'home' && (
+          <Home
+            diagnosisData={diagnosisData}
+            bloodSugarHistory={bloodSugarHistory}
+            onOpenChat={handleOpenChat}
+            onTabChange={handleTabChange}
+          />
+        )}
 
-            {currentView === 'chat' && (
-              <ChatInterface
-                onBack={() => setCurrentView('home')}
-                initialMessage={initialChatMessage}
-                userId={diagnosisData?.userId || 'guest'}
-                onNavigate={(view) => setCurrentView(view)}
-                onRecipeSelect={handleRecipeSelectFromChat} // [New]
-                onSaveMeal={async (time, item) => {
-                  const today = new Date().toISOString().split('T')[0];
-                  const userId = diagnosisData?.userId || 'guest';
+        {currentView === 'chat' && (
+          <ChatInterface
+            onBack={() => setCurrentView('home')}
+            initialMessage={initialChatMessage}
+            userId={diagnosisData?.userId || 'guest'}
+            onNavigate={(view) => setCurrentView(view)}
+            onSaveMeal={(time, item) => {
+              const today = new Date().toISOString().split('T')[0];
+              handleUpdateMeal(today, time, item);
+              alert(`${time === 'breakfast' ? '아침' : time === 'lunch' ? '점심' : '저녁'} 식단에 추가되었습니다!`);
+            }}
+          />
+        )}
 
-                  // 1. Fetch latest data from server first (Source of Truth)
-                  let currentServerData: MealRecordData | null = null;
-                  try {
-                    currentServerData = await fetchMealRecord(userId, today);
-                  } catch (e) {
-                    console.warn("Failed to fetch latest records, using local state fallback.");
-                  }
+        {currentView === 'mealRecord' && (
+          <MealRecord
+            bloodSugarHistory={bloodSugarHistory}
+            onUpdateBloodSugar={(date, data) => setBloodSugarHistory(prev => ({ ...prev, [date]: data }))}
+            mealData={mealData}
+            onUpdateMeal={handleUpdateMeal}
+            userId={diagnosisData?.userId || 'guest'}
+          />
+        )}
 
-                  // Check for overwrite based on server data (or fallback to local)
-                  const existingMeal = currentServerData?.meals?.[time] || mealData[today]?.[time];
+        {currentView === 'customDiet' && (
+          <CustomDiet
+            diagnosisData={diagnosisData}
+            selectedConditions={selectedConditions}
+          />
+        )}
 
-                  if (existingMeal) {
-                    const label = time === 'breakfast' ? '아침' : time === 'lunch' ? '점심' : '저녁';
-                    if (!window.confirm(`오늘 ${label} 식단 기록이 이미 존재합니다. 덮어쓰시겠습니까?`)) {
-                      return;
-                    }
-                  }
+        {currentView === 'mypage' && <MyPage diagnosisData={diagnosisData} onLogout={handleLogout} />}
+      </div>
 
-                  try {
-                    // 2. Prepare payload merging with Server Data
-                    const recordData: MealRecordData = {
-                      user_id: userId,
-                      date: today,
-                      meals: {
-                        ...currentServerData?.meals, // Keep existing server meals
-                        [time]: {
-                          menu: item.menu,
-                          calories: item.nutrition.calories,
-                          carbs: item.nutrition.carbs,
-                          protein: item.nutrition.protein,
-                          fat: item.nutrition.fat
-                        }
-                      },
-                      blood_sugar: currentServerData?.blood_sugar || bloodSugarHistory[today] || {}
-                    };
-
-                    // 3. Save to Backend
-                    await saveMealRecord(recordData);
-
-                    // 4. Update Local State
-                    handleUpdateMeal(today, time, item);
-                    alert(`${time === 'breakfast' ? '아침' : time === 'lunch' ? '점심' : '저녁'} 식단이 안전하게 저장되었습니다!`);
-
-                  } catch (e) {
-                    console.error("Failed to save from chat", e);
-                    alert("저장 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
-                  }
-                }}
-              />
-            )}
-
-            {currentView === 'customDiet' && (
-              <CustomDiet
-                diagnosisData={diagnosisData}
-                selectedConditions={selectedConditions}
-                onRecipeClick={(recipe: Recipe) => {
-                  setSelectedRecipe(recipe);
-                  setCurrentView('recipe-detail');
-                }}
-              />
-            )}
-
-            {currentView === 'recipe-detail' && selectedRecipe && (
-              <RecipeDetail
-                recipe={selectedRecipe}
-                userId={diagnosisData?.userId || 'guest'}
-                onBack={() => setCurrentView('customDiet')}
-              />
-            )}
-            {currentView === 'mealRecord' && (
-              <MealRecord
-                bloodSugarHistory={bloodSugarHistory}
-                onUpdateBloodSugar={(date, data) => setBloodSugarHistory(prev => ({ ...prev, [date]: data }))}
-                mealData={mealData}
-                onUpdateMeal={handleUpdateMeal}
-                userId={diagnosisData?.userId || 'guest'}
-              />
-            )}
-
-            {currentView === 'customDiet' && (
-              <CustomDiet
-                diagnosisData={diagnosisData}
-                selectedConditions={selectedConditions}
-              />
-            )}
-
-            {(currentView === 'mypage' || currentView === 'mypage-report') && (
-              <MyPage
-                diagnosisData={diagnosisData}
-                onLogout={handleLogout}
-                initialShowReport={currentView === 'mypage-report'}
-              />
-            )}
-          </div>
-
-          {currentView !== 'chat' && (
-            <BottomNav activeTab={currentView as any} onTabChange={handleTabChange} />
-          )}
-        </>
+      {currentView !== 'chat' && (
+        <BottomNav activeTab={currentView as any} onTabChange={handleTabChange} />
       )}
     </div>
   );
