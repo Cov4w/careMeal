@@ -163,9 +163,27 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
     }
   };
 
-  const startAnalysis = () => {
+  const startAnalysis = async () => {
     setIsAnalyzing(true);
-    setTimeout(() => {
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/diagnosis', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user_id: formData.name,
+          user_profile: {
+            ...formData,
+            conditions: selectedConditions
+          }
+        }),
+      });
+
+      if (!response.ok) throw new Error('Network response was not ok');
+      const apiResult = await response.json();
+
       const result: DiagnosisResult = {
         name: formData.name,
         gender: formData.gender,
@@ -176,17 +194,55 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
         interests: formData.interests,
         bmi,
         weightStatus,
-        habitScore: 92,
-        prescriptions: ["맞춤형 영양 분석 결과가 도출되었습니다."],
+        habitScore: apiResult.eatScore || 85,
+        prescriptions: apiResult.prescriptions || [
+          "매일 규칙적인 시간에 식사하기",
+          "단순 당질(시럽, 설탕) 섭취 20% 줄이기",
+          "식후 30분 가벼운 산책 습관화"
+        ],
         summary: formData,
         diseaseDetails: formData.diseaseDetails,
-        userId: formData.name, // 이름을 ID로 사용 (실제 로그인처럼 동작)
+        userId: formData.name,
         lifestyle: formData.lifestyle,
         healthGoals: formData.healthGoals
       };
-      setIsAnalyzing(false);
-      onComplete(result);
-    }, 2500);
+
+      // Minimum delay for better UX
+      setTimeout(() => {
+        setIsAnalyzing(false);
+        onComplete(result);
+      }, 1500);
+
+    } catch (e) {
+      console.error("Diagnosis API Error", e);
+      // Fallback in case of error
+      setTimeout(() => {
+        const result: DiagnosisResult = {
+          name: formData.name,
+          gender: formData.gender,
+          age: formData.age,
+          height: formData.height,
+          weight: formData.weight,
+          conditions: selectedConditions,
+          interests: formData.interests,
+          bmi,
+          weightStatus,
+          habitScore: 75,
+          prescriptions: [
+            "서버 연결이 원활하지 않아 기본 처방을 제공합니다.",
+            "물 2L 이상 충분히 섭취하세요.",
+            "충분한 수면을 취하세요."
+          ],
+          summary: formData,
+          diseaseDetails: formData.diseaseDetails,
+          userId: formData.name,
+          lifestyle: formData.lifestyle,
+          healthGoals: formData.healthGoals
+        };
+        setIsAnalyzing(false);
+        onComplete(result);
+      }, 1500);
+    }
   };
 
   if (isAnalyzing) {

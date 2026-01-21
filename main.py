@@ -123,7 +123,19 @@ class UserPreference(Base):
     recipe_id = Column(Integer, ForeignKey("recipes.id"))
     preference = Column(String)  # 'like' or 'dislike'
     timestamp = Column(DateTime, default=datetime.now)
+    timestamp = Column(DateTime, default=datetime.now)
 
+class DailyDiagnosis(BaseModel): # Typo in original instruction, must use Base (SQLAlchemy) not BaseModel (Pydantic)
+    pass 
+# Correcting myself: define SQLAlchemy model correctly
+class DailyDiagnosis(Base):
+    __tablename__ = "daily_diagnoses"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True)
+    date = Column(String, index=True) # YYYY-MM-DD
+    eat_score = Column(Integer)
+    prescriptions = Column(JSON) # List of strings
+    created_at = Column(DateTime, default=datetime.now)
 # DB 테이블 생성
 Base.metadata.create_all(bind=engine)
 
@@ -309,6 +321,10 @@ class DailyRecordRequest(BaseModel):
     date: str
     meals: dict[str, MealItem] # key: breakfast, lunch, dinner
     blood_sugar: dict[str, int] # key: fasting, postBreakfast...
+
+class DiagnosisRequest(BaseModel):
+    user_id: str
+    user_profile: dict  # formData from frontend
 
 # 6. 헬퍼 함수: 페르소나 (말투 강화)
 def get_persona_by_age(age, diabetes_type="일반"):
@@ -611,6 +627,203 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     except Exception as e:
         print(f"🚨 AI 호출 에러: {e}")
         raise HTTPException(status_code=500, detail="AI 응답 생성 실패")
+
+@app.post("/diagnosis")
+async def diagnosis_endpoint(req: DiagnosisRequest, db: Session = Depends(get_db)):
+    print(f"🏥 정밀 진단 요청: {req.user_id}")
+    
+    # 0. DB에서 최신 유저 정보 조회 (conditions 동기화)
+    user = db.query(User).filter(User.user_id == req.user_id).first()
+    db_conditions = req.user_profile.get("conditions", [])
+    
+    if user:
+        # DB 컬럼(diabetes_type, other_conditions)을 최우선으로 사용하여 conditions 구성
+        # 회원가입 시 저장된 정보를 반영하기 위함
+        cols_conditions = []
+        
+        if user.diabetes_type:
+            # 쉼표로 구분된 문자열일 수 있으므로 분리
+            parts = [x.strip() for x in user.diabetes_type.split(',') if x.strip()]
+            cols_conditions.extend(parts)
+            
+        if user.other_conditions:
+            parts = [x.strip() for x in user.other_conditions.split(',') if x.strip()]
+            cols_conditions.extend(parts)
+            
+        if cols_conditions:
+            # 중복 제거
+            db_conditions = list(dict.fromkeys(cols_conditions))
+        elif user.details and isinstance(user.details, dict) and "conditions" in user.details:
+            # 컬럼 정보가 없으면 상세 정보(JSON) 사용
+            db_conditions = user.details["conditions"]
+                 
+    # 1. 최근 7일 기록 조회
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=7)
+    start_date_str = start_date.strftime("%Y-%m-%d")
+    
+    recent_meals = db.query(MealRecord).filter(
+        MealRecord.user_id == req.user_id,
+        MealRecord.date >= start_date_str
+    ).all()
+    
+    recent_health = db.query(HealthRecord).filter(
+        HealthRecord.user_id == req.user_id,
+        HealthRecord.date >= start_date_str
+    ).all()
+    
+    # 기록 요약
+    record_summary = f"최근 7일간 식단 기록 수: {len(recent_meals)}개, 혈당 기록 수: {len(recent_health)}개\n"
+    if recent_meals:
+        record_summary += "주요 식단: " + ", ".join(list(set([m.menu for m in recent_meals]))[:10]) + "...\n"
+        avg_cal = sum([m.calories for m in recent_meals]) / len(recent_meals)
+        record_summary += f"평균 섭취 칼로리: {int(avg_cal)}kcal\n"
+        
+    if recent_health:
+        avg_sugar = sum([h.value for h in recent_health]) / len(recent_health)
+        record_summary += f"평균 혈당: {int(avg_sugar)}mg/dL\n"
+
+    # 2. RAG 검색
+    rag_context = ""
+    if retriever:
+        try:
+            # 주요 키워드로 검색 (질환명, 특이사항)
+            # DB에서 가져온 최신 질환 정보 사용
+            query = f"{' '.join(db_conditions)} 식단 관리 영양 처방"
+            docs = retriever.invoke(query)
+            rag_context = "\n".join([d.page_content for d in docs])
+        except Exception:
+            pass
+
+    # 3. Prompt 구성
+    system_prompt = f"""
+    당신은 '김닥터'라는 냉철하지만 따뜻한 전문 의료 AI입니다.
+    사용자의 건강 정보와 최근 기록을 바탕으로 날카로운 분석을 제공해야 합니다.
+    
+    [사용자 프로필]
+    - 기본정보: {req.user_profile.get('age')}세 {req.user_profile.get('gender')}, {req.user_profile.get('height')}cm/{req.user_profile.get('weight')}kg
+    - 질환: {', '.join(db_conditions)}
+    - 생활습관: 음주({req.user_profile.get('lifestyle', {}).get('alcohol')}), 흡연({req.user_profile.get('lifestyle', {}).get('smoking')})
+    - 상세문진: {req.user_profile.get('diseaseDetails')}
+    
+    [최근 7일 기록 요약]
+    {record_summary}
+    
+    [참고 의학 가이드]
+    {rag_context}
+    
+    [요청사항]
+    위 정보를 종합적으로 분석하여 다음 두 가지를 JSON 포맷으로 출력하세요.
+    1. **eatScore**: 0~100점 사이의 점수. (식습관과 혈당 관리가 잘 될수록 높은 점수. 기록이 부족하면 문진 기반으로 추정하되 조금 낮게 책정)
+    2. **prescriptions**: 김닥터의 핵심 처방 3가지 (짧고 명확한 문장 리스트)
+    
+    [출력 포맷(JSON ONLY)]
+    {{
+        "eatScore": 85,
+        "prescriptions": [
+            "처방1",
+            "처방2",
+            "처방3"
+        ]
+    }}
+    설명이나 잡담 없이 오직 JSON 데이터만 반환하세요.
+    """
+    
+    try:
+        messages = [SystemMessage(content=system_prompt)]
+        response = llm_text.invoke(messages)
+        content = response.content
+        
+        # JSON Parsing
+        import re
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        result = {}
+        if json_match:
+            result = json.loads(json_match.group(0))
+        else:
+            # Fallback
+            result = {
+                "eatScore": 70,
+                "prescriptions": ["규칙적인 식사 습관이 필요합니다.", "기록을 더 꾸준히 남겨주세요.", "전문가 상담을 권장합니다."]
+            }
+        
+        # [ADD] DB 기반 최신 질환 정보도 함께 반환
+        result["conditions"] = db_conditions
+        
+        # [SAVE] DB에 진단 결과 저장 (Upsert)
+        today = datetime.now().strftime("%Y-%m-%d")
+        existing_diag = db.query(DailyDiagnosis).filter(
+            DailyDiagnosis.user_id == req.user_id,
+            DailyDiagnosis.date == today
+        ).first()
+        
+        if existing_diag:
+            existing_diag.eat_score = result.get("eatScore", 0)
+            existing_diag.prescriptions = result.get("prescriptions", [])
+            existing_diag.created_at = datetime.now()
+            print(f"💾 진단 결과 업데이트: {today}, {result.get('eatScore')}점")
+        else:
+            new_diag = DailyDiagnosis(
+                user_id=req.user_id,
+                date=today,
+                eat_score=result.get("eatScore", 0),
+                prescriptions=result.get("prescriptions", [])
+            )
+            db.add(new_diag)
+            print(f"💾 진단 결과 저장: {today}, {result.get('eatScore')}점")
+            
+        db.commit()
+        
+        return result
+            
+    except Exception as e:
+        print(f"Diagnosis Error: {e}")
+        # 에러 시에도 기존 DB에 값이 있다면 반환 시도
+        today = datetime.now().strftime("%Y-%m-%d")
+        fallback_diag = db.query(DailyDiagnosis).filter(
+            DailyDiagnosis.user_id == req.user_id,
+            DailyDiagnosis.date == today
+        ).first()
+        
+        if fallback_diag:
+            return {
+                "eatScore": fallback_diag.eat_score,
+                "prescriptions": fallback_diag.prescriptions,
+                "conditions": db_conditions
+            }
+            
+        return {
+            "eatScore": 0,
+            "prescriptions": ["분석 중 오류가 발생했습니다.", "잠시 후 다시 시도해주세요.", "서버 연결을 확인해주세요."],
+            "conditions": db_conditions
+        }
+
+@app.get("/diagnosis/latest/{user_id}")
+def get_latest_diagnosis(user_id: str, db: Session = Depends(get_db)):
+    # 오늘 기록 우선 조회
+    today = datetime.now().strftime("%Y-%m-%d")
+    diag = db.query(DailyDiagnosis).filter(
+        DailyDiagnosis.user_id == user_id,
+        DailyDiagnosis.date == today
+    ).first()
+    
+    # 오늘 기록 없으면 가장 최신 기록 조회
+    if not diag:
+        diag = db.query(DailyDiagnosis).filter(
+            DailyDiagnosis.user_id == user_id
+        ).order_by(DailyDiagnosis.date.desc()).first()
+        
+    if diag:
+        return {
+            "eatScore": diag.eat_score,
+            "prescriptions": diag.prescriptions,
+            "date": diag.date
+        }
+    return {
+        "eatScore": 0,
+        "prescriptions": [],
+        "date": None
+    }
 
 @app.post("/analyze-food")
 async def analyze_food_endpoint(file: UploadFile = File(...), user_id: str = Form(...), db: Session = Depends(get_db)):

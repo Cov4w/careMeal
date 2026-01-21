@@ -7,13 +7,19 @@ import DiagnosisResultView from './DiagnosisResultView';
 interface MyPageProps {
   diagnosisData: DiagnosisResult | null;
   onLogout: () => void;
+  onDiagnosisUpdate?: () => void;
 }
 
-const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout }) => {
+const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpdate }) => {
   const [showFullReport, setShowFullReport] = useState(false);
 
   if (showFullReport && diagnosisData) {
-    return <DiagnosisResultView data={diagnosisData} onClose={() => setShowFullReport(false)} onRetry={() => {}} />;
+    return <DiagnosisResultView
+      data={diagnosisData}
+      onClose={() => setShowFullReport(false)}
+      onRetry={() => { }}
+      onUpdate={onDiagnosisUpdate} // Pass to child
+    />;
   }
 
   const stats = [
@@ -58,7 +64,7 @@ const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout }) => {
       <div className="p-5 space-y-6">
         <div>
           <h3 className="text-xs font-black text-gray-400 ml-1 mb-3 uppercase tracking-wider opacity-60">나의 리포트</h3>
-          <button 
+          <button
             onClick={() => setShowFullReport(true)}
             className="w-full bg-white p-5 rounded-[28px] flex items-center justify-between shadow-sm active:scale-[0.98] transition-all border border-gray-100"
           >
@@ -87,16 +93,16 @@ const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout }) => {
               </div>
               <ChevronRight size={18} className="text-gray-300" />
             </div>
-            
+
             {/* Logout Button: 최하단에 확실하게 배치하고 터치 영역 확보 */}
             <div className="pt-4 pb-12">
-              <button 
+              <button
                 type="button"
                 onClick={(e) => {
                   e.preventDefault();
                   // 딜레이 없이 즉시 실행
                   onLogout();
-                }} 
+                }}
                 className="w-full py-5 flex items-center justify-center space-x-2 text-[15px] font-black text-rose-500 bg-rose-50/30 border-2 border-rose-100 rounded-[28px] active:scale-95 active:bg-rose-100/50 transition-all touch-manipulation shadow-sm"
               >
                 <LogOut size={20} />

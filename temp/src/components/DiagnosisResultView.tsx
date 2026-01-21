@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Printer, Info, Mail, RefreshCcw, ClipboardCheck, ArrowLeft, Share2, Download } from 'lucide-react';
 import { DiagnosisResult } from './Diagnosis';
 
@@ -7,12 +7,58 @@ interface DiagnosisResultViewProps {
   data: DiagnosisResult;
   onClose: () => void;
   onRetry: () => void;
+  onUpdate?: () => void; // New prop
 }
 
-const DiagnosisResultView: React.FC<DiagnosisResultViewProps> = ({ data, onClose, onRetry }) => {
+const DiagnosisResultView: React.FC<DiagnosisResultViewProps> = ({ data: propData, onClose, onRetry, onUpdate }) => {
+  const [data, setData] = useState<DiagnosisResult>(propData);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+
+    try {
+      // Use summary (formData) if available, otherwise minimal fallback
+      const payload = {
+        user_id: data.userId || data.name,
+        user_profile: {
+          ...(data.summary || {}),
+          conditions: data.conditions
+        }
+      };
+
+      const response = await fetch('http://127.0.0.1:8000/diagnosis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        const apiRes = await response.json();
+        setData(prev => ({
+          ...prev,
+          habitScore: apiRes.eatScore,
+          prescriptions: apiRes.prescriptions,
+          conditions: apiRes.conditions || prev.conditions
+        }));
+        if (onUpdate) onUpdate(); // Notify parent
+      }
+    } catch (e) {
+      console.error("Refresh failed", e);
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 700);
+    }
+  };
+
+  // Auto-refresh on mount (access time)
+  useEffect(() => {
+    handleRefresh();
+  }, []);
+
   const reportDate = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\./g, '.').slice(0, -1);
-  const eatScore = data.habitScore || 92;
-  
+  const eatScore = data.habitScore || 0; // Fallback to 0 if undefined, but will update
+
   return (
     <div className="fixed inset-0 z-[50] flex flex-col bg-white animate-fadeIn overflow-hidden">
       {/* Header with Safe Area */}
@@ -27,7 +73,11 @@ const DiagnosisResultView: React.FC<DiagnosisResultViewProps> = ({ data, onClose
           </div>
         </div>
         <div className="flex items-center space-x-1">
-          <button onClick={onRetry} className="p-2 text-gray-400 active:text-primary transition-colors">
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className={`p-2 text-gray-400 active:text-primary transition-colors ${isRefreshing ? 'animate-spin text-primary' : ''}`}
+          >
             <RefreshCcw size={20} />
           </button>
           <button className="p-2 text-gray-400 active:text-primary">
@@ -51,7 +101,7 @@ const DiagnosisResultView: React.FC<DiagnosisResultViewProps> = ({ data, onClose
               <p className="text-xs font-black text-gray-700">{reportDate}</p>
             </div>
           </div>
-          
+
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
               <p className="text-[10px] text-gray-400 font-bold mb-1 uppercase">신체 정보</p>
@@ -73,7 +123,7 @@ const DiagnosisResultView: React.FC<DiagnosisResultViewProps> = ({ data, onClose
             </div>
           </div>
           <p className="text-xs text-gray-400 mb-8 font-medium">영양 균형 및 식습관 종합 점수</p>
-          
+
           <div className="flex flex-col items-center py-4">
             <div className="relative mb-10">
               <div className="text-6xl font-black text-primary tracking-tighter">
@@ -83,12 +133,12 @@ const DiagnosisResultView: React.FC<DiagnosisResultViewProps> = ({ data, onClose
                 Excellent
               </div>
             </div>
-            
+
             <div className="w-full space-y-4">
               <div className="relative h-3 bg-gray-100 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-yellow-400 to-primary rounded-full transition-all duration-1000 ease-out" 
-                  style={{ width: `${eatScore}%` }} 
+                <div
+                  className="h-full bg-gradient-to-r from-yellow-400 to-primary rounded-full transition-all duration-1000 ease-out"
+                  style={{ width: `${eatScore}%` }}
                 />
               </div>
               <div className="flex justify-between text-[10px] font-black text-gray-300 uppercase tracking-widest px-1">
@@ -104,7 +154,7 @@ const DiagnosisResultView: React.FC<DiagnosisResultViewProps> = ({ data, onClose
         <section className="mx-5 mb-6 bg-white p-8 rounded-[32px] shadow-sm border border-gray-100">
           <h3 className="text-lg font-black text-gray-900 mb-1">체형 및 에너지 분석</h3>
           <p className="text-xs text-gray-400 mb-8 font-medium">BMI 지수 기반 맞춤 권장 칼로리</p>
-          
+
           <div className="flex items-center space-x-6 mb-10 bg-gray-50 p-6 rounded-3xl">
             <div className="flex-shrink-0 w-16 h-16 bg-white rounded-2xl shadow-sm flex flex-col items-center justify-center border border-gray-100">
               <span className="text-[10px] font-bold text-gray-400 uppercase">BMI</span>
@@ -135,13 +185,13 @@ const DiagnosisResultView: React.FC<DiagnosisResultViewProps> = ({ data, onClose
             </div>
             <h3 className="text-lg font-black tracking-tight">김닥터의 핵심 처방</h3>
           </div>
-          
+
           <ul className="space-y-4">
-            {[
+            {(data.prescriptions || [
               "매일 규칙적인 시간에 식사하기",
               "단순 당질(시럽, 설탕) 섭취 20% 줄이기",
               "식후 30분 가벼운 산책 습관화"
-            ].map((text, i) => (
+            ]).map((text, i) => (
               <li key={i} className="flex items-start space-x-3 bg-white/5 p-4 rounded-2xl border border-white/10">
                 <div className="mt-1 w-1.5 h-1.5 bg-primary rounded-full shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
                 <span className="text-sm font-bold text-white/90">{text}</span>

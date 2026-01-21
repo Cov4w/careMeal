@@ -158,6 +158,37 @@ const App: React.FC = () => {
     }
   };
 
+  // [New] Fetch Latest Diagnosis from Server (Syncing across components)
+  const fetchLatestDiagnosis = async () => {
+    const userId = diagnosisData?.userId || localStorage.getItem('userId');
+    if (!userId) return;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/diagnosis/latest/${userId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.date) { // Only update if valid data exists
+          setDiagnosisData(prev => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              habitScore: data.eatScore,
+              prescriptions: data.prescriptions
+            };
+          });
+        }
+      }
+    } catch (e) {
+      console.error("Failed to sync diagnosis", e);
+    }
+  };
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      fetchLatestDiagnosis();
+    }
+  }, [isLoggedIn]);
+
   if (!isLoggedIn) {
     return <Login onLoginComplete={handleLogin} />;
   }
@@ -275,7 +306,13 @@ const App: React.FC = () => {
               />
             )}
 
-            {currentView === 'mypage' && <MyPage diagnosisData={diagnosisData} onLogout={handleLogout} />}
+            {currentView === 'mypage' && (
+              <MyPage
+                diagnosisData={diagnosisData}
+                onLogout={handleLogout}
+                onDiagnosisUpdate={fetchLatestDiagnosis}
+              />
+            )}
           </div>
 
           {currentView !== 'chat' && (
