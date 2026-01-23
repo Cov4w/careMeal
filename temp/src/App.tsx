@@ -11,7 +11,7 @@ import { analyzeFoodImage, fetchMealRecord, saveMealRecord, MealRecordData, fetc
 import { DailyMealPlan, MealItem } from './types';
 
 import RecipeDetail from './components/RecipeDetail'; // [New]
-import { Recipe } from '@/services/api'; // [New]
+import { Recipe, API_BASE_URL } from '@/services/api'; // [New]
 
 export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage' | 'mypage-report' | 'recipe-detail' | 'chatbot';
 
@@ -163,7 +163,7 @@ const App: React.FC = () => {
     if (!userId) return;
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/diagnosis/latest/${userId}`);
+      const res = await fetch(`${API_BASE_URL}/diagnosis/latest/${userId}`);
       if (res.ok) {
         const data = await res.json();
         if (data.date) { // Only update if valid data exists

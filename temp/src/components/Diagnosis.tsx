@@ -5,8 +5,10 @@ import {
   Activity, ShieldCheck, Sparkles, User,
   Stethoscope, Thermometer, Droplets
 } from 'lucide-react';
+import { API_BASE_URL } from '@/services/api';
 
 export interface DiagnosisResult {
+  userId?: string;  // 로그인/가입 후 설정
   name: string;
   gender: string;
   age: string;
@@ -26,7 +28,6 @@ export interface DiagnosisResult {
     smoking: string;
   };
   healthGoals?: string[];
-  userId?: string;
 }
 
 interface DiagnosisProps {
@@ -186,7 +187,7 @@ const Diagnosis: React.FC<DiagnosisProps> = ({
     setIsAnalyzing(true);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/diagnosis', {
+      const response = await fetch(`${API_BASE_URL}/diagnosis`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

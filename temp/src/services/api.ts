@@ -3,7 +3,7 @@ import { ChatRequest, ChatResponse, SignUpRequest, LoginRequest, LoginResponse }
 import { mockChatApi } from './mockApi';
 
 // Real Backend URL
-const API_BASE_URL = 'http://localhost:8000';
+export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export const fetchChatResponse = async (req: ChatRequest): Promise<ChatResponse> => {
   try {
@@ -115,6 +115,10 @@ export interface MealRecordData {
   };
   blood_sugar?: {
     fasting?: number;
+    post_breakfast?: number;  // 백엔드 필드명과 일치
+    post_lunch?: number;
+    post_dinner?: number;
+    // 호환성 (클라이언트가 camelCase 전송 가능)
     postBreakfast?: number;
     postLunch?: number;
     postDinner?: number;

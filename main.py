@@ -128,11 +128,7 @@ class UserPreference(Base):
     recipe_id = Column(Integer, ForeignKey("recipes.id"))
     preference = Column(String)  # 'like' or 'dislike'
     timestamp = Column(DateTime, default=datetime.now)
-    timestamp = Column(DateTime, default=datetime.now)
 
-class DailyDiagnosis(BaseModel): # Typo in original instruction, must use Base (SQLAlchemy) not BaseModel (Pydantic)
-    pass 
-# Correcting myself: define SQLAlchemy model correctly
 class DailyDiagnosis(Base):
     __tablename__ = "daily_diagnoses"
     id = Column(Integer, primary_key=True, index=True)
@@ -374,6 +370,28 @@ def get_persona_by_age(age, diabetes_type="일반"):
 
 # 7. API 엔드포인트
 
+# 2. SQLite 데이터베이스 설정 아래쯤에 추가
+from passlib.context import CryptContext
+import hashlib
+
+# bcrypt 대신 argon2 사용 (길이 제한 없음)
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+def hash_password(password: str) -> str:
+    """Argon2로 비밀번호 해싱 (길이 제한 없음)"""
+    # Argon2는 bcrypt와 달리 입력 길이 제한이 없음
+    return pwd_context.hash(password)
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    """저장된 해시와 입력 비밀번호 검증"""
+    try:
+        return pwd_context.verify(password, hashed_password)
+    except Exception as e:
+        print(f"⚠️ 비밀번호 검증 오류: {e}")
+        return False
+
+# ... (중략) ...
+
 @app.post("/signup")
 async def signup_endpoint(request: SignUpRequest, db: Session = Depends(get_db)):
     print(f"📝 회원가입 요청: {request.user_id}")
@@ -381,11 +399,13 @@ async def signup_endpoint(request: SignUpRequest, db: Session = Depends(get_db))
     if existing_user:
         raise HTTPException(status_code=400, detail="이미 존재하는 아이디입니다.")
     
+    hashed_password = hash_password(request.password)
+    
     new_user = User(
         user_id=request.user_id,
-        password=request.password,
+        password=hashed_password, # 저장
         name=request.name,
-        age=int(request.age), # 문자열일 경우 숫자로 변환
+        age=int(request.age),
         diabetes_type=request.diabetes_type,
         details=request.details or {}
     )
@@ -397,18 +417,32 @@ async def signup_endpoint(request: SignUpRequest, db: Session = Depends(get_db))
 async def login_endpoint(request: LoginRequest, db: Session = Depends(get_db)):
     print(f"🔑 로그인 요청: {request.user_id}")
     user = db.query(User).filter(User.user_id == request.user_id).first()
-    if not user or user.password != request.password:
+    
+    # 비밀번호 검증
+    if not user or not verify_password(request.password, user.password):
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 잘못되었습니다.")
+    
+    # details가 dict 형식이 아닐 수도 있으므로 안전하게 처리
+    details = user.details if isinstance(user.details, dict) else {}
     
     return {
         "status": "success",
         "message": "로그인 성공",
         "data": {
+            "userId": user.user_id,
             "name": user.name,
             "age": user.age,
+            "gender": details.get("gender", "미정"),
+            "height": details.get("height", "0"),
+            "weight": details.get("weight", "0"),
             "diabetes_type": user.diabetes_type,
-            "conditions": [user.diabetes_type],
-            **user.details # 상세 정보 병합
+            "conditions": [user.diabetes_type] if user.diabetes_type else ["일반"],
+            "bmi": details.get("bmi", 0),
+            "weightStatus": details.get("weightStatus", "보통"),
+            "habitScore": details.get("habitScore", 50),
+            "prescriptions": details.get("prescriptions", []),
+            "diseaseDetails": details.get("diseaseDetails", {}),
+            "lifestyle": details.get("lifestyle", {})
         }
     }
 
@@ -446,10 +480,22 @@ def save_records(req: DailyRecordRequest, db: Session = Depends(get_db)):
                 menu=item.menu, calories=item.calories, carbs=item.carbs, protein=item.protein, fat=item.fat
             ))
             
-    # 혈당 저장
-    for h_type, val in req.blood_sugar.items():
-        if val > 0:
-            db.add(HealthRecord(user_id=req.user_id, date=req.date, time_slot=h_type, value=val))
+    # 혈당 저장 (필드명 매핑: 프론트 camelCase -> DB snake_case)
+    blood_sugar_mapping = {
+        "fasting": "fasting",
+        "postBreakfast": "post_breakfast",
+        "postLunch": "post_lunch",
+        "postDinner": "post_dinner",
+        "post_morning": "post_breakfast",  # 호환성
+        "post_lunch": "post_lunch",  # 호환성
+    }
+    
+    if req.blood_sugar:
+        for h_key, val in req.blood_sugar.items():
+            if val and val > 0:
+                # 필드명 변환
+                mapped_key = blood_sugar_mapping.get(h_key, h_key)
+                db.add(HealthRecord(user_id=req.user_id, date=req.date, time_slot=mapped_key, value=val))
             
     db.commit()
     return {"status": "success"}
@@ -545,7 +591,7 @@ async def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
     # [NEW] 맞춤 레시피 DB 조회 (상위 3개)
     rec_list_str = "현재 추천 가능한 DB 레시피가 없습니다."
     try:
-        rec_data = get_recipe_recommendations(request.user_id, db)
+        rec_data = _get_recipe_recommendations_helper(request.user_id, db)
         if rec_data and 'recommendations' in rec_data:
             rec_list_str = ""
             top_recipes = rec_data['recommendations'][:3]
@@ -1016,15 +1062,16 @@ class RecommendationResponse(BaseModel):
 from fastapi.responses import JSONResponse
 import traceback
 
-@app.get("/recipes/recommendations/{user_id}")
-def get_recipe_recommendations(user_id: str, db: Session = Depends(get_db)):
+# 헬퍼 함수: 맞춤 레시피 추천 로직 (DB 의존성 있음)
+def _get_recipe_recommendations_helper(user_id: str, db: Session):
+    """내부 헬퍼 함수 - DB를 받아서 추천 결과를 반환"""
     try:
         print(f"🥗 맞춤 레시피 추천 요청: {user_id}")
         
         # 1. 사용자 정보 확인
         user = db.query(User).filter(User.user_id == user_id).first()
         if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+            return None
 
         # [1단계] Rule-Based Filtering (질환 기반 안전 필터링)
         target_tags = []
@@ -1059,12 +1106,19 @@ def get_recipe_recommendations(user_id: str, db: Session = Depends(get_db)):
         
         if not target_tags: target_tags.append("일반건강")
         
-        # 질환 태그 필터링
-        filter_conditions = [Recipe.disease_tag.contains(tag) for tag in target_tags]
-        candidates = db.query(Recipe).filter(or_(*filter_conditions)).all()
+        # 질환 태그 필터링 (안전한 쿼리: contains() 사용)
+        try:
+            filter_conditions = [Recipe.disease_tag.contains(tag) for tag in target_tags]
+            candidates = db.query(Recipe).filter(or_(*filter_conditions)).all()
+        except Exception as e:
+            print(f"⚠️ Recipe 필터링 오류: {e}. 모든 레시피 로드 시도")
+            candidates = db.query(Recipe).all()
         
         if not candidates:
-            candidates = db.query(Recipe).filter(Recipe.disease_tag == "일반건강").all()
+            try:
+                candidates = db.query(Recipe).filter(Recipe.disease_tag.contains("일반")).all()
+            except:
+                candidates = db.query(Recipe).all()
 
         # [2단계] Content-Based Scoring (취향 기반 가중치 부여)
         scored_recipes = []
@@ -1153,6 +1207,13 @@ def get_recipe_recommendations(user_id: str, db: Session = Depends(get_db)):
             "recommendations": final_results_json
         }
     except Exception as e:
-        error_msg = f"CRITICAL ERROR: {str(e)}\n{traceback.format_exc()}"
-        print(error_msg)
-        return JSONResponse(status_code=500, content={"error": str(e), "trace": traceback.format_exc()})
+        print(f"⚠️ 헬퍼 함수 에러: {e}")
+        return None
+
+@app.get("/recipes/recommendations/{user_id}")
+def get_recipe_recommendations(user_id: str, db: Session = Depends(get_db)):
+    """API 엔드포인트 - 헬퍼 함수를 호출"""
+    result = _get_recipe_recommendations_helper(user_id, db)
+    if result is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return result

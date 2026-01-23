@@ -85,19 +85,20 @@ const Login: React.FC<LoginProps> = ({ onLoginComplete }) => {
           // Server data to DiagnosisResult mapping
           const serverData = response.data;
           const loginResult: DiagnosisResult = {
+            userId: serverData.userId || authData.userId,
             name: serverData.name,
             gender: serverData.gender || '미정',
             age: String(serverData.age),
-            height: serverData.height || '0',
-            weight: serverData.weight || '0',
+            height: String(serverData.height || '0'),
+            weight: String(serverData.weight || '0'),
             conditions: serverData.conditions || ['일반'],
             interests: [],
             bmi: serverData.bmi || 0,
             weightStatus: serverData.weightStatus || '보통',
             habitScore: serverData.habitScore || 50,
-            prescriptions: [],
+            prescriptions: serverData.prescriptions || [],
             summary: {},
-            userId: authData.userId // 결과에 ID 포함
+            diseaseDetails: serverData.diseaseDetails || {}
           };
           console.log("🐛 Login Success. Passing result to App:", loginResult);
           onLoginComplete(loginResult);

@@ -1,0 +1,36 @@
+# General
+.DS_Store
+.git
+.gitignore
+.env
+README.md
+docs/
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+env/
+.venv/
+
+# Node
+node_modules/
+npm-debug.log
+yarn-debug.log
+
+# Data & Database (Security Risk!)
+caremeal.db
+chat_log.csv
+*.log
+
+# Vector DB (Huge size, usually built on runtime or mounted)
+# 만약 RAG 데이터가 공용(레시피 등)이고 미리 빌드된 상태로 배포하길 원하면 주석 처리하세요.
+# 하지만 사용자 데이터가 섞여있다면 반드시 제외해야 합니다.
+# chroma_db/
+
+# Frontend Build
+# Docker related
+docker-compose.yml
+Dockerfile.*
+# nginx.conf (Allowed)
+

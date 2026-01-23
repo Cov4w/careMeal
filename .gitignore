@@ -30,6 +30,11 @@ data/*
 static/*
 !static/.gitkeep
 
+# Personal documentation (exclude from Git)
+docs/PERSONAL_*.md
+docs/*_NOTES.md
+docs/SCRATCH.md
+
 #temp
 # Logs
 logs

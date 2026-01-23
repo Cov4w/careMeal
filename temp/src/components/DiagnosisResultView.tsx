@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Printer, Info, Mail, RefreshCcw, ClipboardCheck, ArrowLeft, Share2, Download } from 'lucide-react';
 import { DiagnosisResult } from './Diagnosis';
+import { API_BASE_URL } from '@/services/api'; // [Mod]
 
 interface DiagnosisResultViewProps {
   data: DiagnosisResult;
@@ -29,7 +30,7 @@ const DiagnosisResultView: React.FC<DiagnosisResultViewProps> = ({ data: propDat
         }
       };
 
-      const response = await fetch('http://127.0.0.1:8000/diagnosis', {
+      const response = await fetch(`${API_BASE_URL}/diagnosis`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

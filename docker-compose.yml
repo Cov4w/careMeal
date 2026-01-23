@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: caremeal-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./caremeal.db:/app/caremeal.db # Persist DB
+      - ./static:/app/static # Persist Images
+      - ./.env:/app/.env # Inject Env vars
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: always
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL}
+    container_name: caremeal-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always

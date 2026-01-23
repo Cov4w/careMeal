@@ -2,7 +2,10 @@ fastapi
 uvicorn
 python-dotenv
 pydantic
+passlib[argon2]
+argon2-cffi
 python-multipart
+
 sqlalchemy
 langchain
 langchain-community
@@ -17,7 +20,7 @@ openpyxl
 langchain-ollama
 langchain-chroma
 langchain-huggingface
-beautifulsoup4
+
 unstructured
 langchain-google-genai
 pandas
