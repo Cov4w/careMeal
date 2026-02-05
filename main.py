@@ -42,16 +42,18 @@ if not os.path.exists("static"):
     os.makedirs("static")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# CORS 설정 - 개발 환경에서는 모든 origin 허용
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 2. SQLite 데이터베이스 설정
-DATABASE_URL = "sqlite:///./caremeal.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'caremeal.db')}"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -251,7 +253,7 @@ class CustomOllamaChat(BaseChatModel):
 
 # 4-1. LLM 초기화 (Custom Class 사용)
 if fav_api_key:
-    print(f"🔑 API Key Loaded: {fav_api_key[:4]}*** (Len: {len(fav_api_key)})")
+    print(f"🔑 API Key Loaded: ****** (Len: {len(fav_api_key)})")
 else:
     print("🚨 API Key NOT FOUND! Please check .env file.")
 
@@ -373,19 +375,64 @@ def get_persona_by_age(age, diabetes_type="일반"):
 # 2. SQLite 데이터베이스 설정 아래쯤에 추가
 from passlib.context import CryptContext
 import hashlib
+from jose import JWTError, jwt
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-# bcrypt 대신 argon2 사용 (길이 제한 없음)
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+# JWT 설정
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production-" + str(uuid.uuid4()))
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRATION_HOURS = 24
 
-def hash_password(password: str) -> str:
-    """Argon2로 비밀번호 해싱 (길이 제한 없음)"""
-    # Argon2는 bcrypt와 달리 입력 길이 제한이 없음
-    return pwd_context.hash(password)
+security = HTTPBearer(auto_error=False)
 
-def verify_password(password: str, hashed_password: str) -> bool:
-    """저장된 해시와 입력 비밀번호 검증"""
+def create_access_token(user_id: str) -> str:
+    """JWT 액세스 토큰 생성"""
+    expire = datetime.now() + timedelta(hours=JWT_EXPIRATION_HOURS)
+    payload = {
+        "sub": user_id,
+        "exp": expire,
+        "iat": datetime.now()
+    }
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+def verify_token(token: str) -> Optional[str]:
+    """JWT 토큰 검증 후 user_id 반환"""
     try:
-        return pwd_context.verify(password, hashed_password)
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        return payload.get("sub")
+    except JWTError:
+        return None
+
+async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[str]:
+    """선택적 인증 - 토큰이 있으면 검증, 없으면 None"""
+    if credentials is None:
+        return None
+    return verify_token(credentials.credentials)
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    """필수 인증 - 토큰이 없거나 유효하지 않으면 401"""
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="인증이 필요합니다.")
+    user_id = verify_token(credentials.credentials)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
+    return user_id
+
+# SHA256 해싱 사용 (간단하고 호환성 좋음)
+def hash_password(password: str) -> str:
+    """SHA256으로 비밀번호 해싱"""
+    return "sha256:" + hashlib.sha256(password.encode()).hexdigest()
+
+def verify_password(password: str, stored_password: str) -> bool:
+    """저장된 비밀번호와 입력 비밀번호 검증 (평문/해시 모두 지원)"""
+    try:
+        # 1. SHA256 해시인 경우
+        if stored_password.startswith('sha256:'):
+            expected_hash = "sha256:" + hashlib.sha256(password.encode()).hexdigest()
+            return stored_password == expected_hash
+        # 2. 평문 비밀번호인 경우 (레거시 데이터)
+        else:
+            return password == stored_password
     except Exception as e:
         print(f"⚠️ 비밀번호 검증 오류: {e}")
         return False
@@ -417,17 +464,28 @@ async def signup_endpoint(request: SignUpRequest, db: Session = Depends(get_db))
 async def login_endpoint(request: LoginRequest, db: Session = Depends(get_db)):
     print(f"🔑 로그인 요청: {request.user_id}")
     user = db.query(User).filter(User.user_id == request.user_id).first()
-    
+
     # 비밀번호 검증
     if not user or not verify_password(request.password, user.password):
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 잘못되었습니다.")
-    
+
+    # 레거시 평문 비밀번호 → 해시로 자동 업그레이드
+    if not user.password.startswith('sha256:'):
+        print(f"🔄 비밀번호 해시 업그레이드: {user.user_id}")
+        user.password = hash_password(request.password)
+        db.commit()
+
+    # JWT 토큰 생성
+    access_token = create_access_token(user.user_id)
+
     # details가 dict 형식이 아닐 수도 있으므로 안전하게 처리
     details = user.details if isinstance(user.details, dict) else {}
-    
+
     return {
         "status": "success",
         "message": "로그인 성공",
+        "access_token": access_token,
+        "token_type": "bearer",
         "data": {
             "userId": user.user_id,
             "name": user.name,

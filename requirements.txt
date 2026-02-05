@@ -5,6 +5,7 @@ pydantic
 passlib[argon2]
 argon2-cffi
 python-multipart
+python-jose[cryptography]
 
 sqlalchemy
 langchain

@@ -1,28 +1,47 @@
-import axios from 'axios';
+import axios, { AxiosRequestConfig } from 'axios';
 import { ChatRequest, ChatResponse, SignUpRequest, LoginRequest, LoginResponse } from '@/types';
 import { mockChatApi } from './mockApi';
 
 // Real Backend URL
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
+// 토큰 관리
+const TOKEN_KEY = 'caremeal_access_token';
+
+export const setAccessToken = (token: string) => {
+  localStorage.setItem(TOKEN_KEY, token);
+};
+
+export const getAccessToken = (): string | null => {
+  return localStorage.getItem(TOKEN_KEY);
+};
+
+export const clearAccessToken = () => {
+  localStorage.removeItem(TOKEN_KEY);
+};
+
+// 인증 헤더 생성
+const getAuthHeaders = (): AxiosRequestConfig['headers'] => {
+  const token = getAccessToken();
+  if (token) {
+    return { Authorization: `Bearer ${token}` };
+  }
+  return {};
+};
+
 export const fetchChatResponse = async (req: ChatRequest): Promise<ChatResponse> => {
   try {
-    // 1. Attempt to connect to real backend
-    // Timeout set to 3s to quickly fallback if server is unresponsive
     const response = await axios.post<ChatResponse>(`${API_BASE_URL}/chat`, req, {
       headers: {
         'Content-Type': 'application/json',
+        ...getAuthHeaders(),
       },
-      timeout: 30000, // Bedrock RAG 응답 대기 시간 충분히 확보 (3초 -> 30초)
+      timeout: 30000,
     });
 
     return response.data;
   } catch (error) {
-    // 2. Fallback Handler
-    // If Backend fails (CORS, Network Error, Server Down), switch to Mock API
     console.warn("⚠️ Backend connection failed. Automatically switching to Mock API mode.", error);
-
-    // Return mock response so the user experience is uninterrupted
     return await mockChatApi(req);
   }
 };
@@ -40,6 +59,10 @@ export const signUp = async (req: SignUpRequest): Promise<{ status: string, mess
 export const login = async (req: LoginRequest): Promise<LoginResponse> => {
   try {
     const response = await axios.post<LoginResponse>(`${API_BASE_URL}/login`, req);
+    // 토큰 저장
+    if (response.data.access_token) {
+      setAccessToken(response.data.access_token);
+    }
     return response.data;
   } catch (error) {
     console.error("Login failed", error);
@@ -56,12 +79,11 @@ export const analyzeFoodImage = async (userId: string, imageFile: File): Promise
     const response = await axios.post(`${API_BASE_URL}/analyze-food`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
+        ...getAuthHeaders(),
       },
-      timeout: 60000, // 이미지 분석 및 RAG 처리 시간 고려
+      timeout: 60000,
     });
 
-    // Backend returns { reply: string, raw_analysis: string, status: string }
-    // We map it to ChatResponse format
     return {
       reply: response.data.reply,
       sources: ["이미지 분석 결과"]
@@ -129,12 +151,12 @@ export const fetchMealRecord = async (userId: string, date: string): Promise<Mea
   try {
     const response = await axios.get<MealRecordData>(`${API_BASE_URL}/records/${userId}`, {
       params: { date },
+      headers: getAuthHeaders(),
       timeout: 5000,
     });
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error) && error.response?.status === 404) {
-      // No data for this date, return null
       return null;
     }
     console.error("Failed to fetch meal record", error);
@@ -147,6 +169,7 @@ export const saveMealRecord = async (data: MealRecordData): Promise<{ status: st
     const response = await axios.post(`${API_BASE_URL}/records`, data, {
       headers: {
         'Content-Type': 'application/json',
+        ...getAuthHeaders(),
       },
       timeout: 5000,
     });
@@ -171,13 +194,14 @@ export const estimateNutrition = async (menuName: string): Promise<NutritionInfo
     }, {
       headers: {
         'Content-Type': 'application/json',
+        ...getAuthHeaders(),
       },
       timeout: 15000,
     });
     return response.data;
   } catch (error) {
     console.error("Failed to estimate nutrition", error);
-    throw error; // Let the caller handle the fallback or error UI
+    throw error;
   }
 };
 
@@ -209,21 +233,27 @@ interface RecommendationResponse {
 
 export const fetchRecommendedRecipes = async (userId: string): Promise<RecommendationResponse> => {
   try {
-    const response = await axios.get<RecommendationResponse>(`${API_BASE_URL}/recipes/recommendations/${userId}`);
+    const response = await axios.get<RecommendationResponse>(`${API_BASE_URL}/recipes/recommendations/${userId}`, {
+      headers: getAuthHeaders(),
+    });
     return response.data;
   } catch (error) {
     console.error("Failed to fetch recommended recipes", error);
-    return { user_condition: '', recommendations: [] }; // Return empty on error to avoid crash
+    return { user_condition: '', recommendations: [] };
   }
 };
 
-// [New] User Preference API
 export const saveUserPreference = async (userId: string, recipeId: number, preference: 'like' | 'dislike') => {
   try {
     await axios.post(`${API_BASE_URL}/user/preference`, {
       user_id: userId,
       recipe_id: recipeId,
       preference: preference
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+      },
     });
     console.log(`Preference saved: ${preference}`);
   } catch (error) {

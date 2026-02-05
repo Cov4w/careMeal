@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { User, Settings, Bell, ChevronRight, Activity, TrendingUp, Calendar, ClipboardCheck, LogOut } from 'lucide-react';
+import { User, Settings, Bell, ChevronRight, Activity, TrendingUp, Calendar, ClipboardCheck, LogOut, Moon, Sun } from 'lucide-react';
 import { DiagnosisResult } from './Diagnosis';
 import DiagnosisResultView from './DiagnosisResultView';
 import SettingsView from './SettingsView';
+import { useTheme } from '@/contexts/ThemeContext';
 
 interface MyPageProps {
   diagnosisData: DiagnosisResult | null;
@@ -14,6 +15,7 @@ interface MyPageProps {
 const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpdate, initialShowReport = false }) => {
   const [showFullReport, setShowFullReport] = useState(initialShowReport);
   const [showSettings, setShowSettings] = useState(false);
+  const { theme, toggleTheme } = useTheme();
 
   if (showFullReport && diagnosisData) {
     return <DiagnosisResultView
@@ -35,22 +37,22 @@ const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpd
   ];
 
   return (
-    <div className="flex flex-col h-full bg-[#f8fafc] pb-32 overflow-y-auto no-scrollbar relative">
+    <div className={`flex flex-col h-full pb-32 overflow-y-auto no-scrollbar relative transition-colors ${theme === 'dark' ? 'bg-gray-900' : 'bg-[#f8fafc]'}`}>
       {/* Profile Header */}
-      <div className="bg-white px-5 pt-8 pb-10 rounded-b-[40px] shadow-sm">
+      <div className={`px-5 pt-8 pb-10 rounded-b-[40px] shadow-sm transition-colors ${theme === 'dark' ? 'bg-gray-800' : 'bg-white'}`}>
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center space-x-4">
-            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center border-4 border-white shadow-sm overflow-hidden">
+            <div className={`w-16 h-16 rounded-full flex items-center justify-center border-4 shadow-sm overflow-hidden ${theme === 'dark' ? 'bg-gray-700 border-gray-600' : 'bg-gray-100 border-white'}`}>
               <User size={32} className="text-gray-400" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-gray-900">{diagnosisData?.name || '환자'}님</h2>
-              <p className="text-sm text-gray-500">{diagnosisData?.name === '김테스트' ? '테스트 계정 모드' : 'CareMeal 프리미엄 회원'}</p>
+              <h2 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{diagnosisData?.name || '환자'}님</h2>
+              <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>{diagnosisData?.name === '김테스트' ? '테스트 계정 모드' : 'CareMeal 프리미엄 회원'}</p>
             </div>
           </div>
           <button
             onClick={() => setShowSettings(true)}
-            className="p-2 bg-gray-50 rounded-full text-gray-400 active:scale-90 transition-transform hover:text-primary"
+            className={`p-2 rounded-full active:scale-90 transition-transform hover:text-primary ${theme === 'dark' ? 'bg-gray-700 text-gray-400' : 'bg-gray-50 text-gray-400'}`}
           >
             <Settings size={20} />
           </button>
@@ -58,12 +60,12 @@ const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpd
 
         <div className="grid grid-cols-3 gap-3">
           {stats.map((s, idx) => (
-            <div key={idx} className="bg-gray-50 p-4 rounded-2xl text-center">
+            <div key={idx} className={`p-4 rounded-2xl text-center ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-50'}`}>
               <div className="flex justify-center mb-2">{s.icon}</div>
               <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">{s.label}</p>
               <div className="flex items-baseline justify-center mt-1">
-                <span className="text-lg font-black text-gray-900">{s.value}</span>
-                <span className="text-[10px] text-gray-500 ml-0.5">{s.unit}</span>
+                <span className={`text-lg font-black ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{s.value}</span>
+                <span className={`text-[10px] ml-0.5 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>{s.unit}</span>
               </div>
             </div>
           ))}
@@ -72,17 +74,17 @@ const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpd
 
       <div className="p-5 space-y-6">
         <div>
-          <h3 className="text-xs font-black text-gray-400 ml-1 mb-3 uppercase tracking-wider opacity-60">나의 리포트</h3>
+          <h3 className={`text-xs font-black ml-1 mb-3 uppercase tracking-wider opacity-60 ${theme === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>나의 리포트</h3>
           <button
             onClick={() => setShowFullReport(true)}
-            className="w-full bg-white p-5 rounded-[28px] flex items-center justify-between shadow-sm active:scale-[0.98] transition-all border border-gray-100"
+            className={`w-full p-5 rounded-[28px] flex items-center justify-between shadow-sm active:scale-[0.98] transition-all border ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}
           >
             <div className="flex items-center space-x-3">
               <div className="p-3 bg-primary/10 rounded-2xl text-primary">
                 <ClipboardCheck size={20} />
               </div>
               <div className="text-left">
-                <span className="font-bold text-gray-800 block text-sm">영양 정밀 진단 리포트</span>
+                <span className={`font-bold block text-sm ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>영양 정밀 진단 리포트</span>
                 <span className="text-[10px] text-gray-400">분석된 나의 상세 건강 데이터</span>
               </div>
             </div>
@@ -91,36 +93,57 @@ const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpd
         </div>
 
         <div>
-          <h3 className="text-xs font-black text-gray-400 ml-1 mb-3 uppercase tracking-wider opacity-60">계정 및 설정</h3>
+          <h3 className={`text-xs font-black ml-1 mb-3 uppercase tracking-wider opacity-60 ${theme === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>계정 및 설정</h3>
           <div className="space-y-3">
+            {/* 다크모드 토글 */}
             <div
-              onClick={() => setShowSettings(true)}
-              className="bg-white p-5 rounded-[24px] flex items-center justify-between shadow-sm border border-gray-100 cursor-pointer active:bg-gray-50 transition-colors"
+              onClick={toggleTheme}
+              className={`p-5 rounded-[24px] flex items-center justify-between shadow-sm border cursor-pointer transition-colors ${theme === 'dark' ? 'bg-gray-800 border-gray-700 active:bg-gray-700' : 'bg-white border-gray-100 active:bg-gray-50'}`}
             >
               <div className="flex items-center space-x-3">
-                <div className="p-2 bg-blue-50 rounded-xl text-blue-500">
+                <div className={`p-2 rounded-xl ${theme === 'dark' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-indigo-50 text-indigo-500'}`}>
+                  {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+                </div>
+                <div>
+                  <span className={`font-bold text-sm ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>
+                    {theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+                  </span>
+                  <p className="text-[10px] text-gray-400">
+                    {theme === 'dark' ? '밝은 화면으로 변경합니다' : '어두운 화면으로 변경합니다'}
+                  </p>
+                </div>
+              </div>
+              <div className={`w-12 h-7 rounded-full p-1 transition-colors ${theme === 'dark' ? 'bg-primary' : 'bg-gray-200'}`}>
+                <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${theme === 'dark' ? 'translate-x-5' : 'translate-x-0'}`} />
+              </div>
+            </div>
+
+            <div
+              onClick={() => setShowSettings(true)}
+              className={`p-5 rounded-[24px] flex items-center justify-between shadow-sm border cursor-pointer transition-colors ${theme === 'dark' ? 'bg-gray-800 border-gray-700 active:bg-gray-700' : 'bg-white border-gray-100 active:bg-gray-50'}`}
+            >
+              <div className="flex items-center space-x-3">
+                <div className={`p-2 rounded-xl ${theme === 'dark' ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-50 text-blue-500'}`}>
                   <Bell size={20} />
                 </div>
-                <span className="font-bold text-gray-800 text-sm">알림 및 안내 설정</span>
+                <span className={`font-bold text-sm ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>알림 및 안내 설정</span>
               </div>
               <ChevronRight size={18} className="text-gray-300" />
             </div>
 
-            {/* Logout Button: 최하단에 확실하게 배치하고 터치 영역 확보 */}
             <div className="pt-4 pb-12">
               <button
                 type="button"
                 onClick={(e) => {
                   e.preventDefault();
-                  // 딜레이 없이 즉시 실행
                   onLogout();
                 }}
-                className="w-full py-5 flex items-center justify-center space-x-2 text-[15px] font-black text-rose-500 bg-rose-50/30 border-2 border-rose-100 rounded-[28px] active:scale-95 active:bg-rose-100/50 transition-all touch-manipulation shadow-sm"
+                className={`w-full py-5 flex items-center justify-center space-x-2 text-[15px] font-black rounded-[28px] active:scale-95 transition-all touch-manipulation shadow-sm ${theme === 'dark' ? 'text-rose-400 bg-rose-500/10 border-2 border-rose-500/30' : 'text-rose-500 bg-rose-50/30 border-2 border-rose-100'}`}
               >
                 <LogOut size={20} />
                 <span>로그아웃 (테스트 종료)</span>
               </button>
-              <p className="text-center text-[10px] text-gray-300 mt-6 font-bold tracking-widest uppercase">
+              <p className={`text-center text-[10px] mt-6 font-bold tracking-widest uppercase ${theme === 'dark' ? 'text-gray-600' : 'text-gray-300'}`}>
                 CareMeal Engine v1.0.7
               </p>
             </div>

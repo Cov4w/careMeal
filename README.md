@@ -1,10 +1,13 @@
 # CareMeal
 ## 프로젝트 개요
 **CareMeal**은 사용자의 건강 정보와 식습관을 분석하여 맞춤형 식단 조언으로 건강관리를 돕는 **RAG 기반 AI 헬스케어 도우미**입니다.
+
 ## 주요기능
 *  **개인 맞춤형 AI 상담**: 다양한 페르소나가 사용자의 연령, 건강상태, 식이에 따른 맞춤형 식단과 건강 조언을 제공합니다.
 *  **식단과 연계한 건강 모니터링으로 관리**: 사용자가 섭취한 식단과 혈당 수치를 기록하고 건강 상태를 지속적으로 관리하여 모니터링할 수 있다.
 *  **RAG(검색 증강 생성) 기반 정보 제공**: 검증된 의학 자료를 기반으로 학습된 데이터베이스를 활용하여 신뢰할 수 있는 건강 정보를 제공합니다.
+*  **다크모드 지원**: 라이트/다크 테마 전환 기능으로 사용자 편의성 향상. 설정은 localStorage에 저장되어 세션 간 유지됩니다.
+*  **브라우저 히스토리 네비게이션**: 브라우저 뒤로가기/앞으로가기 버튼으로 앱 내 페이지 이동 가능. URL 해시 기반 라우팅 (#chat, #meal, #diet 등)
 
 ## 기술 스택
 ### Backend
@@ -15,8 +18,9 @@
 
 ### Frontend
 *   **Framework**: React (Vite), TypeScript
-*   **Styling**: TailwindCSS
-*   **State Management**: Local Context & React Hooks
+*   **Styling**: TailwindCSS (다크모드 지원)
+*   **State Management**: React Context (ThemeContext) & Hooks
+*   **Routing**: Browser History API (해시 기반 라우팅)
 
 ---
 
@@ -62,6 +66,7 @@ careMeal/
 └── temp/                # Frontend 소스 코드 (React)
     ├── src/
     │   ├── components/  # UI 컴포넌트
+    │   ├── contexts/    # React Context (ThemeContext 등)
     │   ├── services/    # API 통신 모듈
     │   └── ...
 ```

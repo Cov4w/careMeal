@@ -1,8 +1,9 @@
 
 import React, { useMemo } from 'react';
-import { ChevronRight, Send, Sparkles, Activity, PieChart, Apple, Droplet, TrendingUp, Zap } from 'lucide-react';
+import { ChevronRight, Send, Sparkles, Activity, PieChart, Apple, Droplet, TrendingUp, Zap, Moon, Sun } from 'lucide-react';
 import { DiagnosisResult } from './Diagnosis';
 import { BloodSugarEntry } from '@/App';
+import { useTheme } from '@/contexts/ThemeContext';
 
 interface HomeProps {
   diagnosisData: DiagnosisResult | null;
@@ -12,6 +13,7 @@ interface HomeProps {
 }
 
 const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenChat, onTabChange }) => {
+  const { theme, toggleTheme } = useTheme();
   const [quickChatMessage, setQuickChatMessage] = React.useState('');
 
   const handleQuickChatSend = (e?: React.FormEvent) => {
@@ -89,20 +91,26 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
   }, [trendData]);
 
   return (
-    <div className="flex flex-col h-full bg-[#f8fafc] pb-32 overflow-y-auto no-scrollbar relative">
-      <header className="px-5 pb-5 pt-[calc(env(safe-area-inset-top,12px)+12px)] flex items-center justify-between sticky top-0 bg-white/80 backdrop-blur-md z-20">
-        <span className="text-2xl font-black tracking-tighter text-gray-900">CareMeal</span>
+    <div className={`flex flex-col h-full pb-32 overflow-y-auto no-scrollbar relative transition-colors ${theme === 'dark' ? 'bg-gray-900' : 'bg-[#f8fafc]'}`}>
+      <header className={`px-5 pb-5 pt-[calc(env(safe-area-inset-top,12px)+12px)] flex items-center justify-between sticky top-0 backdrop-blur-md z-20 ${theme === 'dark' ? 'bg-gray-900/80' : 'bg-white/80'}`}>
+        <span className={`text-2xl font-black tracking-tighter ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>CareMeal</span>
+        <button
+          onClick={toggleTheme}
+          className={`p-2.5 rounded-full transition-all active:scale-90 ${theme === 'dark' ? 'bg-gray-800 text-yellow-400 hover:bg-gray-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+        >
+          {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+        </button>
       </header>
 
       {/* Chatbot Input - Moved to Top */}
       <div className="px-5 mt-4 mb-4">
-        <form onSubmit={handleQuickChatSend} className="w-full h-14 border border-primary/30 rounded-full flex items-center px-4 justify-between bg-white shadow-sm border-2 focus-within:border-primary transition-all">
+        <form onSubmit={handleQuickChatSend} className={`w-full h-14 rounded-full flex items-center px-4 justify-between shadow-sm border-2 focus-within:border-primary transition-all ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-primary/30'}`}>
           <input
             type="text"
             value={quickChatMessage}
             onChange={(e) => setQuickChatMessage(e.target.value)}
             placeholder="혈당 관리가 궁금할 땐 김닥터에게!"
-            className="flex-1 bg-transparent border-none outline-none text-sm text-gray-800 font-medium px-2"
+            className={`flex-1 bg-transparent border-none outline-none text-sm font-medium px-2 ${theme === 'dark' ? 'text-white placeholder:text-gray-500' : 'text-gray-800'}`}
           />
           <button type="submit" disabled={!quickChatMessage.trim()} className={`p-2 rounded-full ${quickChatMessage.trim() ? 'text-primary' : 'text-gray-300'}`}>
             <Send size={22} />
@@ -112,20 +120,20 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
 
       {/* Hero Welcome Section */}
       <div className="px-5 mb-6">
-        <div className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-100">
-          <h2 className="text-xl font-black text-gray-900 mb-1">
+        <div className={`p-6 rounded-[32px] shadow-sm border transition-colors ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
+          <h2 className={`text-xl font-black mb-1 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
             {diagnosisData?.name || '환자'}님, 안녕하세요! 👨‍⚕️
           </h2>
           <p className="text-sm text-gray-400">오늘도 건강한 식사 하셨나요?</p>
 
-          <div className="mt-6 flex items-center justify-between bg-primary/5 p-4 rounded-2xl border border-primary/10">
+          <div className={`mt-6 flex items-center justify-between p-4 rounded-2xl border ${theme === 'dark' ? 'bg-primary/10 border-primary/20' : 'bg-primary/5 border-primary/10'}`}>
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 bg-primary/20 rounded-full flex items-center justify-center text-primary">
                 <PieChart size={20} />
               </div>
               <div>
                 <p className="text-[10px] font-bold text-primary uppercase">오늘의 EAT SCORE</p>
-                <p className="text-lg font-black text-gray-900">{diagnosisData?.habitScore || 0}점</p>
+                <p className={`text-lg font-black ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{diagnosisData?.habitScore || 0}점</p>
               </div>
             </div>
             <button onClick={() => onTabChange('mypage-report')} className="text-xs font-bold text-primary flex items-center">리포트 보기 <ChevronRight size={14} /></button>
@@ -137,15 +145,15 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
       {isDiabetic && (
         <div className="px-5 mb-8">
           <div
-            className="bg-white p-5 rounded-[24px] shadow-sm border border-gray-100"
+            className={`p-5 rounded-[24px] shadow-sm border transition-colors ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}
           >
             {/* 헤더 */}
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-rose-100 rounded-xl flex items-center justify-center">
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${theme === 'dark' ? 'bg-rose-500/20' : 'bg-rose-100'}`}>
                   <Droplet size={18} className="text-rose-500" />
                 </div>
-                <h3 className="font-bold text-gray-900">혈당 변화 추이</h3>
+                <h3 className={`font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>혈당 변화 추이</h3>
               </div>
             </div>
 
@@ -324,38 +332,38 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
             {/* 혈당 분석 요약 카드 */}
             <div className="mt-6 grid grid-cols-3 gap-2">
               {/* 스파이크 */}
-              <div className="bg-gray-50 rounded-2xl p-3 flex flex-col justify-between h-24">
+              <div className={`rounded-2xl p-3 flex flex-col justify-between h-24 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-50'}`}>
                 <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1"><Zap size={12} />스파이크</span>
                 <div className="mt-1">
-                  <span className="text-xl font-black text-gray-900">{sugarStats.spike}</span>
+                  <span className={`text-xl font-black ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{sugarStats.spike}</span>
                   <span className="text-[10px] text-gray-400 font-bold">/회</span>
                 </div>
                 <div className="flex gap-1 mt-2">
                   {[...Array(Math.min(3, sugarStats.spike))].map((_, i) => <div key={i} className="w-2 h-2 rounded-full bg-rose-500" />)}
-                  {[...Array(Math.max(0, 3 - sugarStats.spike))].map((_, i) => <div key={i} className="w-2 h-2 rounded-full bg-gray-200" />)}
+                  {[...Array(Math.max(0, 3 - sugarStats.spike))].map((_, i) => <div key={i} className={`w-2 h-2 rounded-full ${theme === 'dark' ? 'bg-gray-600' : 'bg-gray-200'}`} />)}
                 </div>
               </div>
 
               {/* 최고혈당 */}
-              <div className="bg-gray-50 rounded-2xl p-3 flex flex-col justify-between h-24">
+              <div className={`rounded-2xl p-3 flex flex-col justify-between h-24 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-50'}`}>
                 <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1"><TrendingUp size={12} />최고혈당</span>
                 <div className="mt-1">
-                  <span className="text-xl font-black text-gray-900">{sugarStats.max}</span>
+                  <span className={`text-xl font-black ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{sugarStats.max}</span>
                   <span className="text-[10px] text-gray-400 font-bold">/200</span>
                 </div>
-                <div className="w-full h-1.5 bg-gray-200 rounded-full mt-2 overflow-hidden">
+                <div className={`w-full h-1.5 rounded-full mt-2 overflow-hidden ${theme === 'dark' ? 'bg-gray-600' : 'bg-gray-200'}`}>
                   <div className={`h-full rounded-full ${sugarStats.max > 200 ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (sugarStats.max / 250) * 100)}%` }} />
                 </div>
               </div>
 
               {/* 평균혈당 */}
-              <div className="bg-gray-50 rounded-2xl p-3 flex flex-col justify-between h-24">
+              <div className={`rounded-2xl p-3 flex flex-col justify-between h-24 ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-50'}`}>
                 <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1"><Activity size={12} />평균혈당</span>
                 <div className="mt-1">
-                  <span className="text-xl font-black text-gray-900">{sugarStats.avg}</span>
+                  <span className={`text-xl font-black ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{sugarStats.avg}</span>
                   <span className="text-[10px] text-gray-400 font-bold">/140</span>
                 </div>
-                <div className="w-full h-1.5 bg-gray-200 rounded-full mt-2 overflow-hidden">
+                <div className={`w-full h-1.5 rounded-full mt-2 overflow-hidden ${theme === 'dark' ? 'bg-gray-600' : 'bg-gray-200'}`}>
                   <div className={`h-full rounded-full ${sugarStats.avg > 140 ? 'bg-orange-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (sugarStats.avg / 200) * 100)}%` }} />
                 </div>
               </div>
@@ -369,37 +377,37 @@ const Home: React.FC<HomeProps> = ({ diagnosisData, bloodSugarHistory, onOpenCha
 
       {/* Main Feature Grid */}
       <div className="px-5 grid grid-cols-2 gap-4 mb-8">
-        <button onClick={() => onTabChange('mealRecord')} className="bg-white p-5 rounded-[28px] border border-gray-100 shadow-sm flex flex-col items-center text-center space-y-2 active:scale-95 transition-transform">
-          <div className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center">
+        <button onClick={() => onTabChange('mealRecord')} className={`p-5 rounded-[28px] border shadow-sm flex flex-col items-center text-center space-y-2 active:scale-95 transition-transform ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
+          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${theme === 'dark' ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-50 text-blue-500'}`}>
             <Apple size={24} />
           </div>
-          <span className="text-sm font-bold text-gray-800">식단 & 혈당 기록</span>
+          <span className={`text-sm font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>식단 & 혈당 기록</span>
         </button>
-        <button onClick={() => onTabChange('customDiet')} className="bg-white p-5 rounded-[28px] border border-gray-100 shadow-sm flex flex-col items-center text-center space-y-2 active:scale-95 transition-transform">
+        <button onClick={() => onTabChange('customDiet')} className={`p-5 rounded-[28px] border shadow-sm flex flex-col items-center text-center space-y-2 active:scale-95 transition-transform ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
           <div className="w-12 h-12 bg-primary/10 text-primary rounded-2xl flex items-center justify-center">
             <Sparkles size={24} />
           </div>
-          <span className="text-sm font-bold text-gray-800">맞춤 식단 보기</span>
+          <span className={`text-sm font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>맞춤 식단 보기</span>
         </button>
       </div>
 
       {/* Health Stats */}
       <div className="px-5 mb-8">
-        <h3 className="text-lg font-black text-gray-900 mb-4 px-1">최근 건강 지표</h3>
+        <h3 className={`text-lg font-black mb-4 px-1 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>최근 건강 지표</h3>
         <div className="space-y-3">
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between">
+          <div className={`p-4 rounded-2xl border flex items-center justify-between ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
             <div className="flex items-center space-x-3">
               <Activity size={18} className="text-rose-500" />
-              <span className="text-sm font-bold text-gray-600">체질량 지수 (BMI)</span>
+              <span className={`text-sm font-bold ${theme === 'dark' ? 'text-gray-300' : 'text-gray-600'}`}>체질량 지수 (BMI)</span>
             </div>
-            <span className="text-sm font-black text-gray-900">{diagnosisData?.bmi || '-'}</span>
+            <span className={`text-sm font-black ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{diagnosisData?.bmi || '-'}</span>
           </div>
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between">
+          <div className={`p-4 rounded-2xl border flex items-center justify-between ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
             <div className="flex items-center space-x-3">
               <Sparkles size={18} className="text-yellow-500" />
-              <span className="text-sm font-bold text-gray-600">집중 관리 질환</span>
+              <span className={`text-sm font-bold ${theme === 'dark' ? 'text-gray-300' : 'text-gray-600'}`}>집중 관리 질환</span>
             </div>
-            <span className="text-sm font-black text-gray-900">{diagnosisData?.conditions?.[0] || '없음'}</span>
+            <span className={`text-sm font-black ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{diagnosisData?.conditions?.[0] || '없음'}</span>
           </div>
         </div>
       </div>

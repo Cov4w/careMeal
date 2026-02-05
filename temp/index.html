@@ -11,6 +11,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
+        darkMode: 'class',
         theme: {
           extend: {
             colors: {
@@ -67,6 +68,14 @@
       body {
         overscroll-behavior-y: none;
         -webkit-tap-highlight-color: transparent;
+        transition: background-color 0.2s, color 0.2s;
+      }
+      html.dark body {
+        background-color: #111827;
+        color: #f9fafb;
+      }
+      html.dark {
+        color-scheme: dark;
       }
       .no-scrollbar::-webkit-scrollbar {
         display: none;

@@ -240,7 +240,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ onBack, initialMessage, u
         </div>
       </div>
 
-      <div className="px-4 pt-4 pb-[calc(env(safe-area-inset-bottom,16px)+16px)] bg-white border-t border-gray-100 shadow-[0_-2px_10px_rgba(0,0,0,0.02)]">
+      <div className="px-4 pt-4 pb-[calc(env(safe-area-inset-bottom,16px)+80px)] bg-white border-t border-gray-100 shadow-[0_-2px_10px_rgba(0,0,0,0.02)]">
         <div className="max-w-3xl mx-auto flex items-end space-x-2">
           <button
             onClick={() => fileInputRef.current?.click()}

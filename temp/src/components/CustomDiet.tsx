@@ -1,8 +1,9 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Heart, Clock, Flame, ChevronRight, ChevronLeft, Sparkles, Loader2 } from 'lucide-react';
+import { Heart, Clock, Flame, ChevronRight, ChevronLeft, Sparkles, Loader2, Moon, Sun } from 'lucide-react';
 import { DiagnosisResult } from './Diagnosis';
 import { fetchRecommendedRecipes, Recipe, saveUserPreference } from '../services/api';
+import { useTheme } from '@/contexts/ThemeContext';
 
 interface CustomDietProps {
   diagnosisData: DiagnosisResult | null;
@@ -11,6 +12,7 @@ interface CustomDietProps {
 }
 
 const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData, onRecipeClick }) => {
+  const { theme, toggleTheme } = useTheme();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // State
@@ -96,7 +98,7 @@ const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData, onRecipeClick })
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full pb-24 bg-white">
+      <div className={`flex flex-col items-center justify-center h-full pb-24 ${theme === 'dark' ? 'bg-gray-900' : 'bg-white'}`}>
         <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
         <p className="text-gray-400 font-bold">맞춤 식단을 분석 중입니다...</p>
       </div>
@@ -108,31 +110,37 @@ const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData, onRecipeClick })
   const fullConditionText = userConditions.join(', ');
 
   return (
-    <div className="flex flex-col h-full bg-white pb-24 overflow-y-auto no-scrollbar relative font-sans">
+    <div className={`flex flex-col h-full pb-24 overflow-y-auto no-scrollbar relative font-sans transition-colors ${theme === 'dark' ? 'bg-gray-900' : 'bg-white'}`}>
       {/* Header */}
-      <header className="px-5 py-6 flex items-center justify-center sticky top-0 bg-white/95 backdrop-blur-sm z-30 border-b border-gray-50">
-        <h1 className="text-xl font-bold text-gray-900 tracking-tight">
+      <header className={`px-5 py-6 flex items-center justify-between sticky top-0 backdrop-blur-sm z-30 border-b ${theme === 'dark' ? 'bg-gray-900/95 border-gray-800' : 'bg-white/95 border-gray-50'}`}>
+        <h1 className={`text-xl font-bold tracking-tight ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
           {fullConditionText} 맞춤 식단
         </h1>
+        <button
+          onClick={toggleTheme}
+          className={`p-2.5 rounded-full transition-all active:scale-90 ${theme === 'dark' ? 'bg-gray-800 text-yellow-400' : 'bg-gray-100 text-gray-600'}`}
+        >
+          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
       </header>
 
       {/* Dietary Preferences Section */}
       <div className="mt-8 relative">
         <div className="px-5 flex items-center justify-between mb-4">
-          <h3 className="text-lg font-black text-gray-900 flex items-center">
+          <h3 className={`text-lg font-black flex items-center ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
             식이 선호도 <Sparkles size={16} className="ml-2 text-primary/60" />
           </h3>
 
           <div className="flex items-center space-x-2">
             <button
               onClick={() => scroll('left')}
-              className="w-8 h-8 bg-gray-50 rounded-full flex items-center justify-center text-gray-400 active:scale-90 transition-all hover:bg-primary/10 hover:text-primary border border-gray-100 shadow-sm"
+              className={`w-8 h-8 rounded-full flex items-center justify-center text-gray-400 active:scale-90 transition-all hover:bg-primary/10 hover:text-primary border shadow-sm ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-gray-50 border-gray-100'}`}
             >
               <ChevronLeft size={16} />
             </button>
             <button
               onClick={() => scroll('right')}
-              className="w-8 h-8 bg-gray-50 rounded-full flex items-center justify-center text-gray-400 active:scale-90 transition-all hover:bg-primary/10 hover:text-primary border border-gray-100 shadow-sm"
+              className={`w-8 h-8 rounded-full flex items-center justify-center text-gray-400 active:scale-90 transition-all hover:bg-primary/10 hover:text-primary border shadow-sm ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-gray-50 border-gray-100'}`}
             >
               <ChevronRight size={16} />
             </button>
@@ -141,8 +149,8 @@ const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData, onRecipeClick })
 
         {/* Scrollable Container */}
         <div className="relative overflow-visible">
-          <div className="absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-white via-white/50 to-transparent z-10 pointer-events-none" />
-          <div className="absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-white via-white/50 to-transparent z-10 pointer-events-none" />
+          <div className={`absolute inset-y-0 left-0 w-6 bg-gradient-to-r z-10 pointer-events-none ${theme === 'dark' ? 'from-gray-900 via-gray-900/50 to-transparent' : 'from-white via-white/50 to-transparent'}`} />
+          <div className={`absolute inset-y-0 right-0 w-6 bg-gradient-to-l z-10 pointer-events-none ${theme === 'dark' ? 'from-gray-900 via-gray-900/50 to-transparent' : 'from-white via-white/50 to-transparent'}`} />
 
           <div
             ref={scrollRef}
@@ -172,10 +180,10 @@ const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData, onRecipeClick })
       <div className="mt-6 px-5 mb-10">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h3 className="text-xl font-black text-gray-900">추천 레시피</h3>
+            <h3 className={`text-xl font-black ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>추천 레시피</h3>
             <div className="flex flex-wrap gap-2 mt-2">
               {userConditions.map(cond => (
-                <span key={cond} className="text-[11px] text-gray-500 font-bold bg-gray-100 px-2 py-1 rounded-md">
+                <span key={cond} className={`text-[11px] font-bold px-2 py-1 rounded-md ${theme === 'dark' ? 'text-gray-400 bg-gray-800' : 'text-gray-500 bg-gray-100'}`}>
                   #{cond}
                 </span>
               ))}
@@ -191,7 +199,7 @@ const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData, onRecipeClick })
               onClick={() => setActivePreference(activePreference === 'liked' ? '' : 'liked')}
               className={`text-xs font-bold px-3 py-2 rounded-xl transition-all flex items-center ${activePreference === 'liked'
                 ? 'bg-rose-100 text-rose-500 shadow-sm'
-                : 'bg-gray-100 text-gray-400 hover:bg-rose-50 hover:text-rose-400'
+                : theme === 'dark' ? 'bg-gray-800 text-gray-400 hover:bg-rose-500/20 hover:text-rose-400' : 'bg-gray-100 text-gray-400 hover:bg-rose-50 hover:text-rose-400'
                 }`}
             >
               <Heart size={14} className={`mr-1 ${activePreference === 'liked' ? 'fill-current' : ''}`} /> 찜한 메뉴
@@ -236,7 +244,7 @@ const CustomDiet: React.FC<CustomDietProps> = ({ diagnosisData, onRecipeClick })
                   {/* recipe.sodium이 일정 수준 이상이면 경고 표시를 할 수도 있음 */}
                 </div>
 
-                <h4 className="font-black text-[16px] text-gray-900 mb-3 px-1 truncate leading-tight group-hover:text-primary transition-colors">
+                <h4 className={`font-black text-[16px] mb-3 px-1 truncate leading-tight group-hover:text-primary transition-colors ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
                   {recipe.name}
                 </h4>
                 <div className="flex items-center space-x-4 px-1">

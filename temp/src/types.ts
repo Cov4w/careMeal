@@ -42,6 +42,8 @@ export interface LoginRequest {
 export interface LoginResponse {
   status: string;
   message: string;
+  access_token?: string;
+  token_type?: string;
   data?: any; // Using any for flexibility with DiagnosisResult
 }
 

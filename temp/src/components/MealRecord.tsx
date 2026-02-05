@@ -1,11 +1,12 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import {
-  Plus, Clock, Trash2, Calendar as CalendarIcon, ChevronDown, ChevronLeft, ChevronRight, Droplet, Activity, Camera, Loader2
+  Plus, Clock, Trash2, Calendar as CalendarIcon, ChevronDown, ChevronLeft, ChevronRight, Droplet, Activity, Camera, Loader2, Moon, Sun
 } from 'lucide-react';
 import { BloodSugarEntry } from '@/App';
 import { DailyMealPlan, MealItem } from '@/types';
 import { analyzeFoodImage, fetchMealRecord, saveMealRecord, estimateNutrition, MealRecordData } from '@/services/api';
+import { useTheme } from '@/contexts/ThemeContext';
 
 interface MealPlan {
   breakfast: string;
@@ -22,6 +23,8 @@ interface MealRecordProps {
 }
 
 const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloodSugar, mealData, onUpdateMeal, userId }) => {
+  const { theme, toggleTheme } = useTheme();
+
   // Use Local Date for consistency
   const getLocalDateStr = () => {
     const d = new Date();
@@ -400,9 +403,15 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#f8fafc] pb-32 overflow-y-auto no-scrollbar relative">
-      <header className="px-5 pb-5 pt-[calc(env(safe-area-inset-top,12px)+12px)] bg-white border-b border-gray-100 sticky top-0 z-30">
-        <h1 className="text-xl font-bold text-gray-900">나의 식단 & 혈당기록</h1>
+    <div className={`flex flex-col h-full pb-32 overflow-y-auto no-scrollbar relative transition-colors ${theme === 'dark' ? 'bg-gray-900' : 'bg-[#f8fafc]'}`}>
+      <header className={`px-5 pb-5 pt-[calc(env(safe-area-inset-top,12px)+12px)] border-b sticky top-0 z-30 flex items-center justify-between ${theme === 'dark' ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-100'}`}>
+        <h1 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>나의 식단 & 혈당기록</h1>
+        <button
+          onClick={toggleTheme}
+          className={`p-2.5 rounded-full transition-all active:scale-90 ${theme === 'dark' ? 'bg-gray-800 text-yellow-400' : 'bg-gray-100 text-gray-600'}`}
+        >
+          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
       </header>
 
       {/* Calendar Section */}
@@ -412,40 +421,40 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
             <div className="flex items-center space-x-2">
               <button
                 onClick={(e) => { e.stopPropagation(); changeMonth(-1); }}
-                className="p-1 rounded-full hover:bg-gray-100 text-gray-500 transition-colors"
+                className={`p-1 rounded-full transition-colors ${theme === 'dark' ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}
               >
                 <ChevronLeft size={20} />
               </button>
-              <h2 className="text-base font-black text-gray-800">
+              <h2 className={`text-base font-black ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>
                 {viewDate.getFullYear()}년 {viewDate.getMonth() + 1}월
               </h2>
               <button
                 onClick={(e) => { e.stopPropagation(); changeMonth(1); }}
-                className="p-1 rounded-full hover:bg-gray-100 text-gray-500 transition-colors"
+                className={`p-1 rounded-full transition-colors ${theme === 'dark' ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-100 text-gray-500'}`}
               >
                 <ChevronRight size={20} />
               </button>
             </div>
           ) : (
             <div onClick={() => setIsMonthView(true)} className="flex items-center space-x-1 cursor-pointer">
-              <h2 className="text-base font-black text-gray-800">달력 보기</h2>
+              <h2 className={`text-base font-black ${theme === 'dark' ? 'text-white' : 'text-gray-800'}`}>달력 보기</h2>
               <ChevronDown size={16} className="text-gray-400" />
             </div>
           )}
-          <button onClick={() => setIsMonthView(!isMonthView)} className={`p-2 rounded-xl ${isMonthView ? 'bg-primary text-white' : 'bg-white border border-gray-100 shadow-sm'}`}>
+          <button onClick={() => setIsMonthView(!isMonthView)} className={`p-2 rounded-xl ${isMonthView ? 'bg-primary text-white' : theme === 'dark' ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-100 shadow-sm'}`}>
             <CalendarIcon size={18} />
           </button>
         </div>
 
         {isMonthView ? (
-          <div className="bg-white rounded-[28px] p-5 shadow-sm border border-gray-100 animate-fadeIn">
+          <div className={`rounded-[28px] p-5 shadow-sm border animate-fadeIn ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
             <div className="grid grid-cols-7 gap-1">
               {monthDays.map((date, idx) => {
                 if (!date) return <div key={`empty-${idx}`} className="aspect-square" />;
                 const isSelected = selectedDate === date.full;
                 return (
                   <button key={date.full} onClick={() => { setSelectedDate(date.full); setIsMonthView(false); }}
-                    className={`aspect-square rounded-xl flex flex-col items-center justify-center transition-all ${isSelected ? 'bg-primary text-white font-bold' : date.isToday ? 'bg-gray-50 text-primary font-bold' : 'text-gray-700'}`}
+                    className={`aspect-square rounded-xl flex flex-col items-center justify-center transition-all ${isSelected ? 'bg-primary text-white font-bold' : date.isToday ? (theme === 'dark' ? 'bg-gray-700 text-primary font-bold' : 'bg-gray-50 text-primary font-bold') : theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}
                   >
                     <span className="text-xs">{date.day}</span>
                   </button>
@@ -457,7 +466,7 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
           <div className="flex space-x-2 overflow-x-auto no-scrollbar py-2">
             {weekDates.map((date) => (
               <button key={date.full} onClick={() => setSelectedDate(date.full)}
-                className={`flex-shrink-0 w-12 h-16 rounded-2xl flex flex-col items-center justify-center transition-all ${selectedDate === date.full ? 'bg-primary text-white shadow-lg' : 'bg-white text-gray-400 border border-gray-100'}`}
+                className={`flex-shrink-0 w-12 h-16 rounded-2xl flex flex-col items-center justify-center transition-all ${selectedDate === date.full ? 'bg-primary text-white shadow-lg' : theme === 'dark' ? 'bg-gray-800 text-gray-400 border border-gray-700' : 'bg-white text-gray-400 border border-gray-100'}`}
               >
                 <span className="text-[10px] font-bold mb-1">{date.label}</span>
                 <span className="text-base font-black">{date.day}</span>
@@ -469,13 +478,13 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
 
       {/* Blood Sugar Section - Fasting */}
       <div className="px-5 mb-6">
-        <div className="bg-rose-50 p-5 rounded-[28px] border border-rose-100 flex items-center justify-between">
+        <div className={`p-5 rounded-[28px] border flex items-center justify-between ${theme === 'dark' ? 'bg-rose-500/10 border-rose-500/20' : 'bg-rose-50 border-rose-100'}`}>
           <div className="flex items-center space-x-4">
-            <div className="w-12 h-12 rounded-2xl bg-white flex items-center justify-center text-rose-500 shadow-sm">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-rose-500 shadow-sm ${theme === 'dark' ? 'bg-gray-800' : 'bg-white'}`}>
               <Droplet size={24} />
             </div>
             <div>
-              <span className="text-sm font-bold text-gray-900">공복 혈당</span>
+              <span className={`text-sm font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>공복 혈당</span>
               <p className={`text-lg font-black ${currentBloodSugar.fasting ? getSugarStatusColor(currentBloodSugar.fasting, 'fasting') : 'text-gray-300'}`}>
                 {currentBloodSugar.fasting ? `${currentBloodSugar.fasting} mg/dL` : '미입력'}
               </p>
@@ -501,16 +510,16 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
           // Only show snack/lateNightSnack if they have data
           return !!currentMeals[slot.id as keyof DailyMealPlan];
         }).map((slot) => (
-          <div key={slot.id} className="bg-white p-5 rounded-[32px] border border-gray-100 shadow-sm space-y-4">
+          <div key={slot.id} className={`p-5 rounded-[32px] border shadow-sm space-y-4 ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
-                <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center text-2xl">{slot.icon}</div>
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-2xl ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-50'}`}>{slot.icon}</div>
                 <div>
                   <div className="flex items-center space-x-2">
-                    <span className="text-sm font-bold text-gray-900">{slot.label}</span>
+                    <span className={`text-sm font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{slot.label}</span>
                     <span className="text-[10px] text-gray-400"><Clock size={10} className="inline mr-1" />{slot.time}</span>
                   </div>
-                  <p className={`text-sm mt-0.5 ${currentMeals[slot.id as keyof DailyMealPlan] ? 'text-gray-800 font-medium' : 'text-gray-300 italic'}`}>
+                  <p className={`text-sm mt-0.5 ${currentMeals[slot.id as keyof DailyMealPlan] ? (theme === 'dark' ? 'text-gray-300 font-medium' : 'text-gray-800 font-medium') : 'text-gray-400 italic'}`}>
                     {currentMeals[slot.id as keyof DailyMealPlan]?.menu || '식단 기록 전'}
                   </p>
                   {currentMeals[slot.id as keyof DailyMealPlan] && (
@@ -530,12 +539,12 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
 
             {slot.sugarId && (
               <>
-                <div className="h-px bg-gray-50 w-full" />
+                <div className={`h-px w-full ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-50'}`} />
 
-                <div className="flex items-center justify-between bg-gray-50/50 p-3 rounded-2xl">
+                <div className={`flex items-center justify-between p-3 rounded-2xl ${theme === 'dark' ? 'bg-gray-700/50' : 'bg-gray-50/50'}`}>
                   <div className="flex items-center space-x-2">
                     <Activity size={14} className="text-gray-400" />
-                    <span className="text-xs font-bold text-gray-500">식후 2시간 혈당</span>
+                    <span className={`text-xs font-bold ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>식후 2시간 혈당</span>
                   </div>
                   <div className="flex items-center space-x-3">
                     <span className={`text-sm font-black ${currentBloodSugar[slot.sugarId as keyof BloodSugarEntry] ? getSugarStatusColor(currentBloodSugar[slot.sugarId as keyof BloodSugarEntry] as number, 'post') : 'text-gray-300'}`}>
@@ -568,19 +577,19 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
       {/* Add Menu Bottom Sheet */}
       {showAddMenu && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 backdrop-blur-sm px-4 pb-[env(safe-area-inset-bottom,20px)]" onClick={() => setShowAddMenu(false)}>
-          <div className="w-full max-w-sm bg-white rounded-[32px] p-6 shadow-2xl animate-slideUp space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-bold text-gray-900 mb-2">어떤 식단을 추가할까요?</h3>
-            <button onClick={() => { setShowAddMenu(false); handleEdit('snack'); }} className="w-full p-4 bg-orange-50 rounded-2xl flex items-center gap-4 hover:bg-orange-100 transition-colors">
-              <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-2xl shadow-sm">🍪</div>
+          <div className={`w-full max-w-sm rounded-[32px] p-6 shadow-2xl animate-slideUp space-y-4 ${theme === 'dark' ? 'bg-gray-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+            <h3 className={`text-lg font-bold mb-2 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>어떤 식단을 추가할까요?</h3>
+            <button onClick={() => { setShowAddMenu(false); handleEdit('snack'); }} className={`w-full p-4 rounded-2xl flex items-center gap-4 transition-colors ${theme === 'dark' ? 'bg-orange-500/10 hover:bg-orange-500/20' : 'bg-orange-50 hover:bg-orange-100'}`}>
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl shadow-sm ${theme === 'dark' ? 'bg-gray-700' : 'bg-white'}`}>🍪</div>
               <div className="text-left">
-                <p className="font-bold text-gray-900">간식 추가</p>
+                <p className={`font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>간식 추가</p>
                 <p className="text-xs text-gray-500">오후 3:00</p>
               </div>
             </button>
-            <button onClick={() => { setShowAddMenu(false); handleEdit('lateNightSnack'); }} className="w-full p-4 bg-indigo-50 rounded-2xl flex items-center gap-4 hover:bg-indigo-100 transition-colors">
-              <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-2xl shadow-sm">🍗</div>
+            <button onClick={() => { setShowAddMenu(false); handleEdit('lateNightSnack'); }} className={`w-full p-4 rounded-2xl flex items-center gap-4 transition-colors ${theme === 'dark' ? 'bg-indigo-500/10 hover:bg-indigo-500/20' : 'bg-indigo-50 hover:bg-indigo-100'}`}>
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl shadow-sm ${theme === 'dark' ? 'bg-gray-700' : 'bg-white'}`}>🍗</div>
               <div className="text-left">
-                <p className="font-bold text-gray-900">야식 추가</p>
+                <p className={`font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>야식 추가</p>
                 <p className="text-xs text-gray-500">오후 9:00</p>
               </div>
             </button>
@@ -591,8 +600,8 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
 
       {editingMeal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 backdrop-blur-sm px-4 pb-[env(safe-area-inset-bottom,20px)]" onClick={() => setEditingMeal(null)}>
-          <div className="w-full max-w-sm bg-white rounded-[32px] p-6 shadow-2xl animate-slideUp" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-bold text-gray-900 mb-4">
+          <div className={`w-full max-w-sm rounded-[32px] p-6 shadow-2xl animate-slideUp ${theme === 'dark' ? 'bg-gray-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+            <h3 className={`text-lg font-bold mb-4 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
               {editingMeal.type.startsWith('post') || editingMeal.type === 'fasting' ? '혈당 기록' : '식단 기록'}
             </h3>
 
@@ -604,14 +613,14 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
                   value={tempValue}
                   onChange={(e) => setTempValue(e.target.value)}
                   placeholder="혈당 수치 입력"
-                  className="w-full p-4 bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-primary/20 text-xl font-black text-center"
+                  className={`w-full p-4 border-none rounded-2xl focus:ring-2 focus:ring-primary/20 text-xl font-black text-center ${theme === 'dark' ? 'bg-gray-700 text-white placeholder:text-gray-500' : 'bg-gray-50 text-gray-900'}`}
                 />
                 <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">mg/dL</span>
               </div>
             ) : (
               <div className="space-y-3">
                 <div className="flex items-center space-x-2 mb-2">
-                  <label className="flex items-center space-x-2 bg-gray-100 px-4 py-2 rounded-xl text-xs font-bold text-gray-600 cursor-pointer active:scale-95 transition-transform">
+                  <label className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold cursor-pointer active:scale-95 transition-transform ${theme === 'dark' ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'}`}>
                     {isAnalyzing ? <Loader2 className="animate-spin" size={16} /> : <Camera size={16} />}
                     <span>{isAnalyzing ? '분석 중...' : '사진으로 자동 입력'}</span>
                     <input type="file" accept="image/*" className="hidden" onChange={handleImageAnalysis} disabled={isAnalyzing} />
@@ -625,33 +634,33 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
                     value={tempMenu}
                     onChange={(e) => setTempMenu(e.target.value)}
                     placeholder="예: 현미밥 1공기, 미역국, 고등어구이"
-                    className="w-full h-20 p-3 bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-primary/20 text-sm resize-none"
+                    className={`w-full h-20 p-3 border-none rounded-xl focus:ring-2 focus:ring-primary/20 text-sm resize-none ${theme === 'dark' ? 'bg-gray-700 text-white placeholder:text-gray-500' : 'bg-gray-50'}`}
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-gray-400">칼로리 (kcal)</label>
-                    <input type="number" value={tempCal} onChange={(e) => setTempCal(e.target.value)} className="w-full p-3 bg-gray-50 rounded-xl text-sm font-bold" />
+                    <input type="number" value={tempCal} onChange={(e) => setTempCal(e.target.value)} className={`w-full p-3 rounded-xl text-sm font-bold ${theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-gray-50'}`} />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-gray-400">탄수화물 (g)</label>
-                    <input type="number" value={tempCarb} onChange={(e) => setTempCarb(e.target.value)} className="w-full p-3 bg-gray-50 rounded-xl text-sm font-bold" />
+                    <input type="number" value={tempCarb} onChange={(e) => setTempCarb(e.target.value)} className={`w-full p-3 rounded-xl text-sm font-bold ${theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-gray-50'}`} />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-gray-400">단백질 (g)</label>
-                    <input type="number" value={tempProt} onChange={(e) => setTempProt(e.target.value)} className="w-full p-3 bg-gray-50 rounded-xl text-sm font-bold" />
+                    <input type="number" value={tempProt} onChange={(e) => setTempProt(e.target.value)} className={`w-full p-3 rounded-xl text-sm font-bold ${theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-gray-50'}`} />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-gray-400">지방 (g)</label>
-                    <input type="number" value={tempFat} onChange={(e) => setTempFat(e.target.value)} className="w-full p-3 bg-gray-50 rounded-xl text-sm font-bold" />
+                    <input type="number" value={tempFat} onChange={(e) => setTempFat(e.target.value)} className={`w-full p-3 rounded-xl text-sm font-bold ${theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-gray-50'}`} />
                   </div>
                 </div>
               </div>
             )}
 
             <div className="flex space-x-2 mt-6">
-              <button onClick={() => setEditingMeal(null)} className="flex-1 py-4 bg-gray-100 text-gray-500 font-bold rounded-2xl">취소</button>
+              <button onClick={() => setEditingMeal(null)} className={`flex-1 py-4 font-bold rounded-2xl ${theme === 'dark' ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-500'}`}>취소</button>
               <button onClick={saveData} className="flex-1 py-4 bg-primary text-white font-bold rounded-2xl">저장</button>
             </div>
           </div>

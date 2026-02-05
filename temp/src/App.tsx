@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Home from '@/components/Home';
 import ChatInterface from '@/components/ChatInterface';
 import MealRecord from '@/components/MealRecord';
@@ -7,13 +7,36 @@ import MyPage from '@/components/MyPage';
 import BottomNav from '@/components/BottomNav';
 import Login from '@/components/Login';
 import { DiagnosisResult } from '@/components/Diagnosis';
-import { analyzeFoodImage, fetchMealRecord, saveMealRecord, MealRecordData, fetchRecommendedRecipes } from '@/services/api';
+import { analyzeFoodImage, fetchMealRecord, saveMealRecord, MealRecordData, fetchRecommendedRecipes, clearAccessToken } from '@/services/api';
 import { DailyMealPlan, MealItem } from './types';
 
-import RecipeDetail from './components/RecipeDetail'; // [New]
-import { Recipe, API_BASE_URL } from '@/services/api'; // [New]
+import RecipeDetail from './components/RecipeDetail';
+import { Recipe, API_BASE_URL } from '@/services/api';
+import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 
 export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage' | 'mypage-report' | 'recipe-detail' | 'chatbot';
+
+// URL 해시와 뷰 상태 매핑
+const VIEW_TO_HASH: Record<ViewState, string> = {
+  'home': '',
+  'chat': 'chat',
+  'mealRecord': 'meal',
+  'customDiet': 'diet',
+  'mypage': 'mypage',
+  'mypage-report': 'report',
+  'recipe-detail': 'recipe',
+  'chatbot': 'chat',
+};
+
+const HASH_TO_VIEW: Record<string, ViewState> = {
+  '': 'home',
+  'chat': 'chat',
+  'meal': 'mealRecord',
+  'diet': 'customDiet',
+  'mypage': 'mypage',
+  'report': 'mypage-report',
+  'recipe': 'recipe-detail',
+};
 
 export interface BloodSugarEntry {
   fasting?: number;
@@ -22,13 +45,22 @@ export interface BloodSugarEntry {
   postDinner?: number;
 }
 
-const App: React.FC = () => {
+// 히스토리 스택 관리
+const viewHistory: ViewState[] = [];
+
+const AppContent: React.FC = () => {
+  const { theme } = useTheme();
+
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
     return localStorage.getItem('caremeal_logged_in') === 'true';
   });
 
-  const [currentView, setCurrentView] = useState<ViewState>('home');
-  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null); // [New]
+  // URL 해시에서 초기 뷰 결정
+  const [currentView, setCurrentView] = useState<ViewState>(() => {
+    const hash = window.location.hash.replace('#', '');
+    return HASH_TO_VIEW[hash] || 'home';
+  });
+  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
 
   const [diagnosisData, setDiagnosisData] = useState<DiagnosisResult | null>(() => {
     const saved = localStorage.getItem('caremeal_diagnosis_data');
@@ -102,7 +134,7 @@ const App: React.FC = () => {
       localStorage.setItem('userId', data.userId);
     } else {
       // userId가 없으면 이름이라도 ID로 사용 (혹은 임시 ID 생성)
-      const fallbackId = data.name || "guest_" + Math.random().toString(36).substr(2, 9);
+      const fallbackId = data.name || "guest_" + Math.random().toString(36).substring(2, 11);
       localStorage.setItem('userId', fallbackId);
       // data 객체에도 업데이트
       data.userId = fallbackId;
@@ -117,23 +149,57 @@ const App: React.FC = () => {
     setDiagnosisData(null);
     setSelectedConditions([]);
     setInitialChatMessage('');
-    setCurrentView('home');
+    navigateTo('home', true);
+    clearAccessToken();
     localStorage.clear();
   };
+
+  // 브라우저 히스토리와 연동된 뷰 변경
+  const navigateTo = useCallback((view: ViewState, replace = false) => {
+    const hash = VIEW_TO_HASH[view];
+    const newUrl = hash ? `#${hash}` : window.location.pathname;
+
+    if (replace) {
+      window.history.replaceState({ view }, '', newUrl);
+    } else {
+      window.history.pushState({ view }, '', newUrl);
+    }
+    setCurrentView(view);
+  }, []);
+
+  // 브라우저 뒤로가기/앞으로가기 이벤트 처리
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      if (event.state?.view) {
+        setCurrentView(event.state.view);
+      } else {
+        const hash = window.location.hash.replace('#', '');
+        setCurrentView(HASH_TO_VIEW[hash] || 'home');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    // 초기 상태 설정
+    const initialHash = window.location.hash.replace('#', '');
+    const initialView = HASH_TO_VIEW[initialHash] || 'home';
+    window.history.replaceState({ view: initialView }, '', window.location.href);
+
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const handleOpenChat = (message?: string) => {
     if (message) setInitialChatMessage(message);
     else setInitialChatMessage('');
-    setCurrentView('chat');
+    navigateTo('chat');
   };
 
   const handleTabChange = (view: ViewState) => {
     setInitialChatMessage('');
-    // chatbot 탭 클릭 시 chat 뷰로 이동
     if (view === 'chatbot') {
-      setCurrentView('chat');
+      navigateTo('chat');
     } else {
-      setCurrentView(view);
+      navigateTo(view);
     }
   };
 
@@ -141,13 +207,12 @@ const App: React.FC = () => {
   const handleRecipeSelectFromChat = async (recipeId: number) => {
     const userId = diagnosisData?.userId || 'guest';
     try {
-      // 레시피 데이터가 App에 없으므로 서버에서 가져와서 찾음
       const data = await fetchRecommendedRecipes(userId);
       const targetRecipe = data.recommendations.find(r => r.id === recipeId);
 
       if (targetRecipe) {
         setSelectedRecipe(targetRecipe);
-        setCurrentView('recipe-detail');
+        navigateTo('recipe-detail');
       } else {
         alert("해당 레시피 정보를 찾을 수 없습니다.");
       }
@@ -193,12 +258,8 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="h-[100dvh] w-full bg-white max-w-md mx-auto shadow-none sm:shadow-2xl overflow-hidden relative flex flex-col font-sans">
-      {!isLoggedIn ? (
-        <Login onLoginComplete={handleLogin} />
-      ) : (
-        <>
-          <div className="flex-1 overflow-hidden relative">
+    <div className={`h-[100dvh] w-full max-w-md mx-auto shadow-none sm:shadow-2xl overflow-hidden relative flex flex-col font-sans transition-colors duration-200 ${theme === 'dark' ? 'bg-gray-900 text-white' : 'bg-white text-gray-900'}`}>
+      <div className="flex-1 overflow-hidden relative">
             {currentView === 'home' && (
               <Home
                 diagnosisData={diagnosisData}
@@ -210,11 +271,11 @@ const App: React.FC = () => {
 
             {currentView === 'chat' && (
               <ChatInterface
-                onBack={() => setCurrentView('home')}
+                onBack={() => window.history.back()}
                 initialMessage={initialChatMessage}
                 userId={diagnosisData?.userId || 'guest'}
-                onNavigate={(view) => setCurrentView(view)}
-                onRecipeSelect={handleRecipeSelectFromChat} // [New]
+                onNavigate={(view) => navigateTo(view)}
+                onRecipeSelect={handleRecipeSelectFromChat}
                 onSaveMeal={async (time, item) => {
                   const today = new Date().toISOString().split('T')[0];
                   const userId = diagnosisData?.userId || 'guest';
@@ -276,7 +337,7 @@ const App: React.FC = () => {
                 selectedConditions={selectedConditions}
                 onRecipeClick={(recipe: Recipe) => {
                   setSelectedRecipe(recipe);
-                  setCurrentView('recipe-detail');
+                  navigateTo('recipe-detail');
                 }}
               />
             )}
@@ -285,9 +346,10 @@ const App: React.FC = () => {
               <RecipeDetail
                 recipe={selectedRecipe}
                 userId={diagnosisData?.userId || 'guest'}
-                onBack={() => setCurrentView('customDiet')}
+                onBack={() => window.history.back()}
               />
             )}
+
             {currentView === 'mealRecord' && (
               <MealRecord
                 bloodSugarHistory={bloodSugarHistory}
@@ -295,13 +357,6 @@ const App: React.FC = () => {
                 mealData={mealData}
                 onUpdateMeal={handleUpdateMeal}
                 userId={diagnosisData?.userId || 'guest'}
-              />
-            )}
-
-            {currentView === 'customDiet' && (
-              <CustomDiet
-                diagnosisData={diagnosisData}
-                selectedConditions={selectedConditions}
               />
             )}
 
@@ -315,12 +370,17 @@ const App: React.FC = () => {
             )}
           </div>
 
-          {currentView !== 'chat' && (
-            <BottomNav activeTab={currentView as any} onTabChange={handleTabChange} />
-          )}
-        </>
-      )}
+      <BottomNav activeTab={currentView === 'chat' ? 'chatbot' : currentView as any} onTabChange={handleTabChange} />
     </div>
+  );
+};
+
+// App 래퍼 - ThemeProvider로 감싸기
+const App: React.FC = () => {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
   );
 };
 
