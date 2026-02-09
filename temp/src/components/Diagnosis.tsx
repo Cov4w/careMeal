@@ -28,6 +28,7 @@ export interface DiagnosisResult {
     smoking: string;
   };
   healthGoals?: string[];
+  joinedAt?: string;  // 가입일 (ISO string)
 }
 
 interface DiagnosisProps {

@@ -500,7 +500,8 @@ async def login_endpoint(request: LoginRequest, db: Session = Depends(get_db)):
             "habitScore": details.get("habitScore", 50),
             "prescriptions": details.get("prescriptions", []),
             "diseaseDetails": details.get("diseaseDetails", {}),
-            "lifestyle": details.get("lifestyle", {})
+            "lifestyle": details.get("lifestyle", {}),
+            "joinedAt": user.joined_at.isoformat() if user.joined_at else None
         }
     }
 

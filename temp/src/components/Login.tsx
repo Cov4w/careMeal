@@ -98,7 +98,8 @@ const Login: React.FC<LoginProps> = ({ onLoginComplete }) => {
             habitScore: serverData.habitScore || 50,
             prescriptions: serverData.prescriptions || [],
             summary: {},
-            diseaseDetails: serverData.diseaseDetails || {}
+            diseaseDetails: serverData.diseaseDetails || {},
+            joinedAt: serverData.joinedAt || new Date().toISOString()
           };
           console.log("🐛 Login Success. Passing result to App:", loginResult);
           onLoginComplete(loginResult);

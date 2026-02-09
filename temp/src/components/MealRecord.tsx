@@ -85,7 +85,6 @@ const MealRecord: React.FC<MealRecordProps> = ({ bloodSugarHistory, onUpdateBloo
       });
     }
     return days;
-    return days;
   }, [viewDate, todayStr]);
 
   const changeMonth = (increment: number) => {

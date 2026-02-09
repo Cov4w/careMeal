@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { User, Settings, Bell, ChevronRight, Activity, TrendingUp, Calendar, ClipboardCheck, LogOut, Moon, Sun } from 'lucide-react';
 import { DiagnosisResult } from './Diagnosis';
 import DiagnosisResultView from './DiagnosisResultView';
@@ -17,6 +17,32 @@ const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpd
   const [showSettings, setShowSettings] = useState(false);
   const { theme, toggleTheme } = useTheme();
 
+  // 관리 기간 계산 (가입일로부터 오늘까지)
+  const managementDays = useMemo(() => {
+    if (!diagnosisData?.joinedAt) {
+      // joinedAt이 없으면 localStorage에서 확인 또는 1일 반환
+      const savedData = localStorage.getItem('caremeal_diagnosis_data');
+      if (savedData) {
+        try {
+          const parsed = JSON.parse(savedData);
+          if (parsed.joinedAt) {
+            const joinedDate = new Date(parsed.joinedAt);
+            const today = new Date();
+            const diffTime = Math.abs(today.getTime() - joinedDate.getTime());
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            return Math.max(1, diffDays); // 최소 1일
+          }
+        } catch (e) {}
+      }
+      return 1;
+    }
+    const joinedDate = new Date(diagnosisData.joinedAt);
+    const today = new Date();
+    const diffTime = Math.abs(today.getTime() - joinedDate.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return Math.max(1, diffDays); // 최소 1일
+  }, [diagnosisData?.joinedAt]);
+
   if (showFullReport && diagnosisData) {
     return <DiagnosisResultView
       data={diagnosisData}
@@ -33,7 +59,7 @@ const MyPage: React.FC<MyPageProps> = ({ diagnosisData, onLogout, onDiagnosisUpd
   const stats = [
     { label: 'EAT SCORE', value: diagnosisData?.habitScore || '0', unit: '점', icon: <Activity className="text-primary" /> },
     { label: '체질량지수', value: diagnosisData?.bmi || '0', unit: 'BMI', icon: <TrendingUp className="text-blue-500" /> },
-    { label: '관리 기간', value: '1', unit: '일', icon: <Calendar className="text-yellow-500" /> },
+    { label: '관리 기간', value: managementDays, unit: '일', icon: <Calendar className="text-yellow-500" /> },
   ];
 
   return (
