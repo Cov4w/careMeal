@@ -1,4 +1,7 @@
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Depends
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Depends, Request, BackgroundTasks
+import sys
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -36,6 +39,16 @@ from fastapi.staticfiles import StaticFiles
 # 1. 앱 생성 및 설정
 app = FastAPI()
 
+# 요청 유효성 검사 에러 로깅
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    print(f"❌ 유효성 검사 실패: {exc.errors()}")
+    print(f"📦 요청 본문: {exc.body}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": str(exc.body)[:500]}
+    )
+
 # 정적 파일 서빙 설정 (로컬 이미지용)
 # 배포 시 static 폴더만 같이 옮기면 됨
 if not os.path.exists("static"):
@@ -51,10 +64,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. SQLite 데이터베이스 설정
+# 2. 데이터베이스 설정 (PostgreSQL/SQLite 지원)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'caremeal.db')}"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'caremeal.db')}")
+
+if DATABASE_URL.startswith("postgresql"):
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_recycle=3600,
+    )
+else:
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -139,6 +161,35 @@ class DailyDiagnosis(Base):
     eat_score = Column(Integer)
     prescriptions = Column(JSON) # List of strings
     created_at = Column(DateTime, default=datetime.now)
+
+class BodyCompositionRecord(Base):
+    __tablename__ = "body_composition_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.user_id"), nullable=False, index=True)
+    measured_at = Column(DateTime, default=datetime.now)
+
+    # 측정값
+    weight = Column(Float)  # kg
+    impedance = Column(Float)  # ohm
+    heart_rate = Column(Integer, nullable=True)  # bpm (optional)
+
+    # 계산된 체성분
+    bmi = Column(Float)
+    body_fat_percentage = Column(Float)
+    water_percentage = Column(Float)
+    bone_mass = Column(Float)
+    muscle_mass = Column(Float)
+    visceral_fat = Column(Float)
+    bmr = Column(Float)
+    metabolic_age = Column(Integer)
+    protein_percentage = Column(Float)
+    body_type = Column(String)
+    ideal_weight = Column(Float)
+    fat_mass = Column(Float)
+    fat_free_mass = Column(Float)
+    body_score = Column(Integer)
+
 # DB 테이블 생성
 Base.metadata.create_all(bind=engine)
 
@@ -322,17 +373,17 @@ class LoginRequest(BaseModel):
     password: str
 
 class MealItem(BaseModel):
-    menu: str
-    calories: int
-    carbs: int
-    protein: int
-    fat: int
+    menu: Optional[str] = None
+    calories: Optional[float] = 0
+    carbs: Optional[float] = 0
+    protein: Optional[float] = 0
+    fat: Optional[float] = 0
 
 class DailyRecordRequest(BaseModel):
     user_id: str
     date: str
-    meals: dict[str, MealItem] # key: breakfast, lunch, dinner
-    blood_sugar: dict[str, int] # key: fasting, postBreakfast...
+    meals: Optional[dict[str, MealItem]] = {} # key: breakfast, lunch, dinner
+    blood_sugar: Optional[dict[str, Optional[int]]] = {} # key: fasting, postBreakfast...
 
 class DiagnosisRequest(BaseModel):
     user_id: str
@@ -509,20 +560,28 @@ async def login_endpoint(request: LoginRequest, db: Session = Depends(get_db)):
 def get_records(user_id: str, date: str, db: Session = Depends(get_db)):
     # 1. 식단 조회
     meals = db.query(MealRecord).filter(
-        MealRecord.user_id == user_id, 
+        MealRecord.user_id == user_id,
         MealRecord.date == date
     ).all()
-    
+
     # 2. 혈당 조회
     health = db.query(HealthRecord).filter(
-        HealthRecord.user_id == user_id, 
+        HealthRecord.user_id == user_id,
         HealthRecord.date == date
     ).all()
-    
+
+    # DB snake_case -> 프론트엔드 camelCase 변환
+    blood_sugar_reverse_mapping = {
+        "fasting": "fasting",
+        "post_breakfast": "postBreakfast",
+        "post_lunch": "postLunch",
+        "post_dinner": "postDinner",
+    }
+
     return {
         "date": date,
         "meals": {m.meal_type: {"menu": m.menu, "calories": m.calories, "carbs": m.carbs, "protein": m.protein, "fat": m.fat} for m in meals},
-        "blood_sugar": {h.time_slot: h.value for h in health}
+        "blood_sugar": {blood_sugar_reverse_mapping.get(h.time_slot, h.time_slot): h.value for h in health}
     }
 
 @app.post("/records")
@@ -575,7 +634,7 @@ def get_user_profile_db(user_id: str, db: Session):
 def get_daily_health_summary(user_id: str, date_str: str, db: Session):
     meals = db.query(MealRecord).filter(MealRecord.user_id == user_id, MealRecord.date == date_str).all()
     health = db.query(HealthRecord).filter(HealthRecord.user_id == user_id, HealthRecord.date == date_str).all()
-    
+
     summary = f"[{date_str} 건강 기록]\n"
     print(f"🕵️ 건강 기록 조회 ({user_id}, {date_str}): 식단 {len(meals)}개, 혈당 {len(health)}개") # [Log]
     if meals:
@@ -584,12 +643,26 @@ def get_daily_health_summary(user_id: str, date_str: str, db: Session):
         summary += "- 식단:\n" + "\n".join([f"  * {type_map.get(m.meal_type, m.meal_type)}: {m.menu} ({m.calories}kcal)" for m in meals]) + "\n"
     else:
         summary += "- 식단: 기록 없음\n"
-        
+
     if health:
         summary += "- 혈당:\n" + "\n".join([f"  * {h.time_slot}: {h.value}" for h in health]) + "\n"
     else:
         summary += "- 혈당: 기록 없음\n"
-        
+
+    # [NEW] 최신 체성분 데이터 추가
+    latest_body = db.query(BodyCompositionRecord).filter(
+        BodyCompositionRecord.user_id == user_id
+    ).order_by(BodyCompositionRecord.measured_at.desc()).first()
+
+    if latest_body:
+        summary += f"- 체성분 (최근 측정: {latest_body.measured_at.strftime('%Y-%m-%d')}):\n"
+        summary += f"  * 체중: {latest_body.weight}kg, BMI: {latest_body.bmi}\n"
+        summary += f"  * 체지방률: {latest_body.body_fat_percentage}%, 근육량: {latest_body.muscle_mass}kg\n"
+        summary += f"  * 내장지방: {latest_body.visceral_fat}, 기초대사량: {latest_body.bmr}kcal\n"
+        summary += f"  * 체형 점수: {latest_body.body_score}점\n"
+    else:
+        summary += "- 체성분: 측정 기록 없음\n"
+
     return summary
 
 @app.post("/chat")
@@ -1276,3 +1349,362 @@ def get_recipe_recommendations(user_id: str, db: Session = Depends(get_db)):
     if result is None:
         raise HTTPException(status_code=404, detail="User not found")
     return result
+
+# ============================================================
+# 체성분 분석 API (Body Composition)
+# ============================================================
+from body_metrics import BodyMetricsCalculator
+
+class BodyCompositionRequest(BaseModel):
+    weight: float  # kg
+    impedance: float  # ohm
+    heart_rate: Optional[int] = None  # bpm
+
+class BodyCompositionStatsRequest(BaseModel):
+    period: str = "1month"  # 1week, 1month, 3months, all
+
+@app.post("/api/body-composition")
+async def save_body_composition(req: BodyCompositionRequest, db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
+    """새 체성분 측정 데이터 저장"""
+    print(f"📊 체성분 측정 저장: {user_id}")
+
+    # 1. 사용자 정보 조회 (height, age, gender 필요)
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # User 테이블 컬럼 또는 details JSON에서 값 가져오기 (양쪽 호환)
+    details = user.details if isinstance(user.details, dict) else {}
+
+    # height: 테이블 컬럼 우선, 없으면 details, 없으면 기본값
+    height = user.height if user.height else float(details.get("height", 0))
+    if not height or height <= 0:
+        height = 170.0  # 기본값
+        print(f"⚠️ 사용자 키 정보 없음, 기본값 {height}cm 사용")
+
+    # age: 테이블 컬럼 우선
+    age = user.age if user.age else int(details.get("age", 30))
+    if not age or age <= 0:
+        age = 30
+
+    # gender: 테이블 컬럼 우선, 없으면 details
+    gender = user.gender if user.gender else details.get("gender", "남성")
+    sex = "male" if gender in ["남성", "male", "남", "M", "m"] else "female"
+
+    print(f"📋 사용자 정보: 키={height}cm, 나이={age}세, 성별={gender}({sex})")
+
+    # 2. 체성분 계산
+    calculator = BodyMetricsCalculator(
+        weight=req.weight,
+        height=height,
+        age=age,
+        sex=sex,
+        impedance=req.impedance
+    )
+    result = calculator.calculate_all()
+
+    # 3. DB에 저장
+    record = BodyCompositionRecord(
+        user_id=user_id,
+        weight=req.weight,
+        impedance=req.impedance,
+        heart_rate=req.heart_rate,
+        bmi=result.bmi,
+        body_fat_percentage=result.body_fat_percentage,
+        water_percentage=result.water_percentage,
+        bone_mass=result.bone_mass,
+        muscle_mass=result.muscle_mass,
+        visceral_fat=result.visceral_fat,
+        bmr=result.bmr,
+        metabolic_age=result.metabolic_age,
+        protein_percentage=result.protein_percentage,
+        body_type=result.body_type,
+        ideal_weight=result.ideal_weight,
+        fat_mass=result.fat_mass,
+        fat_free_mass=result.fat_free_mass,
+        body_score=result.body_score
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+
+    print(f"✅ 체성분 저장 완료: ID {record.id}, BMI {result.bmi}, 체지방 {result.body_fat_percentage}%")
+
+    return {
+        "status": "success",
+        "id": record.id,
+        "measured_at": record.measured_at.isoformat(),
+        "weight": record.weight,
+        "bmi": record.bmi,
+        "body_fat_percentage": record.body_fat_percentage,
+        "water_percentage": record.water_percentage,
+        "bone_mass": record.bone_mass,
+        "muscle_mass": record.muscle_mass,
+        "visceral_fat": record.visceral_fat,
+        "bmr": record.bmr,
+        "metabolic_age": record.metabolic_age,
+        "protein_percentage": record.protein_percentage,
+        "body_type": record.body_type,
+        "ideal_weight": record.ideal_weight,
+        "fat_mass": record.fat_mass,
+        "fat_free_mass": record.fat_free_mass,
+        "body_score": record.body_score
+    }
+
+@app.get("/api/body-composition/latest")
+async def get_latest_body_composition(db: Session = Depends(get_db), user_id: str = Depends(get_current_user)):
+    """최신 체성분 측정 데이터 조회"""
+    record = db.query(BodyCompositionRecord).filter(
+        BodyCompositionRecord.user_id == user_id
+    ).order_by(BodyCompositionRecord.measured_at.desc()).first()
+
+    if not record:
+        return {"status": "no_data", "message": "측정 기록이 없습니다."}
+
+    return {
+        "status": "success",
+        "id": record.id,
+        "measured_at": record.measured_at.isoformat(),
+        "weight": record.weight,
+        "impedance": record.impedance,
+        "heart_rate": record.heart_rate,
+        "bmi": record.bmi,
+        "body_fat_percentage": record.body_fat_percentage,
+        "water_percentage": record.water_percentage,
+        "bone_mass": record.bone_mass,
+        "muscle_mass": record.muscle_mass,
+        "visceral_fat": record.visceral_fat,
+        "bmr": record.bmr,
+        "metabolic_age": record.metabolic_age,
+        "protein_percentage": record.protein_percentage,
+        "body_type": record.body_type,
+        "ideal_weight": record.ideal_weight,
+        "fat_mass": record.fat_mass,
+        "fat_free_mass": record.fat_free_mass,
+        "body_score": record.body_score
+    }
+
+@app.get("/api/body-composition/history")
+async def get_body_composition_history(
+    page: int = 1,
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user)
+):
+    """체성분 측정 히스토리 조회 (페이지네이션)"""
+    offset = (page - 1) * limit
+
+    total = db.query(BodyCompositionRecord).filter(
+        BodyCompositionRecord.user_id == user_id
+    ).count()
+
+    records = db.query(BodyCompositionRecord).filter(
+        BodyCompositionRecord.user_id == user_id
+    ).order_by(BodyCompositionRecord.measured_at.desc()).offset(offset).limit(limit).all()
+
+    return {
+        "status": "success",
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total + limit - 1) // limit,
+        "data": [
+            {
+                "id": r.id,
+                "measured_at": r.measured_at.isoformat(),
+                "weight": r.weight,
+                "impedance": r.impedance,
+                "heart_rate": r.heart_rate,
+                "bmi": r.bmi,
+                "body_fat_percentage": r.body_fat_percentage,
+                "water_percentage": r.water_percentage,
+                "bone_mass": r.bone_mass,
+                "muscle_mass": r.muscle_mass,
+                "visceral_fat": r.visceral_fat,
+                "bmr": r.bmr,
+                "metabolic_age": r.metabolic_age,
+                "protein_percentage": r.protein_percentage,
+                "body_type": r.body_type,
+                "ideal_weight": r.ideal_weight,
+                "fat_mass": r.fat_mass,
+                "fat_free_mass": r.fat_free_mass,
+                "body_score": r.body_score
+            }
+            for r in records
+        ]
+    }
+
+@app.get("/api/body-composition/stats")
+async def get_body_composition_stats(
+    period: str = "1month",
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user)
+):
+    """체성분 통계 데이터 (그래프용)"""
+    # 기간 계산
+    now = datetime.now()
+    if period == "1week":
+        start_date = now - timedelta(days=7)
+    elif period == "1month":
+        start_date = now - timedelta(days=30)
+    elif period == "3months":
+        start_date = now - timedelta(days=90)
+    else:  # all
+        start_date = datetime.min
+
+    records = db.query(BodyCompositionRecord).filter(
+        BodyCompositionRecord.user_id == user_id,
+        BodyCompositionRecord.measured_at >= start_date
+    ).order_by(BodyCompositionRecord.measured_at.asc()).all()
+
+    if not records:
+        return {"status": "no_data", "data": []}
+
+    # 통계 데이터 생성
+    data = []
+    for r in records:
+        data.append({
+            "date": r.measured_at.strftime("%Y-%m-%d"),
+            "weight": r.weight,
+            "body_fat_percentage": r.body_fat_percentage,
+            "muscle_mass": r.muscle_mass,
+            "bmi": r.bmi,
+            "body_score": r.body_score
+        })
+
+    # 변화량 계산
+    first = records[0]
+    last = records[-1]
+    changes = {
+        "weight": round(last.weight - first.weight, 1) if first.weight and last.weight else 0,
+        "body_fat": round(last.body_fat_percentage - first.body_fat_percentage, 1) if first.body_fat_percentage and last.body_fat_percentage else 0,
+        "muscle_mass": round(last.muscle_mass - first.muscle_mass, 1) if first.muscle_mass and last.muscle_mass else 0
+    }
+
+    return {
+        "status": "success",
+        "period": period,
+        "record_count": len(records),
+        "changes": changes,
+        "data": data
+    }
+
+
+# ============================================================
+# 체중계 브릿지 API
+# ============================================================
+import subprocess
+import uuid as uuid_module
+from pathlib import Path
+
+SCALE_SESSION_DIR = Path(__file__).parent / "temp" / "scale_sessions"
+SCALE_SESSION_DIR.mkdir(parents=True, exist_ok=True)
+
+class ScaleStartRequest(BaseModel):
+    duration: int = 60  # 측정 대기 시간 (초)
+
+@app.post("/api/scale/start")
+async def start_scale_measurement(
+    req: ScaleStartRequest,
+    background_tasks: BackgroundTasks,
+    user_id: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """체중계 측정 세션 시작"""
+    # 세션 ID 생성
+    session_id = str(uuid_module.uuid4())[:8]
+
+    # 토큰 가져오기 (현재 요청의 Authorization 헤더에서)
+    # get_current_user에서 이미 검증됨
+
+    # 초기 상태 파일 생성
+    status_file = SCALE_SESSION_DIR / f"{session_id}.json"
+    initial_status = {
+        "session_id": session_id,
+        "status": "starting",
+        "message": "브릿지 서비스 시작 중...",
+        "remaining_seconds": req.duration,
+        "weight": None,
+        "impedance": None,
+        "heart_rate": None,
+        "bmi": None,
+        "body_fat_percentage": None,
+        "muscle_mass": None,
+        "body_score": None,
+        "error": None,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    with open(status_file, 'w') as f:
+        json.dump(initial_status, f)
+
+    # 백그라운드에서 브릿지 서비스 실행
+    def run_bridge():
+        try:
+            # 토큰 생성 (브릿지용)
+            token_data = {"sub": user_id}
+            token = jwt.encode(token_data, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+            script_path = Path(__file__).parent / "scripts" / "scale_bridge_service.py"
+            api_url = os.getenv("API_BASE_URL", "http://localhost:8000")
+
+            cmd = [
+                sys.executable,
+                str(script_path),
+                f"--session-id={session_id}",
+                f"--user-id={user_id}",
+                f"--token={token}",
+                f"--api-url={api_url}",
+                f"--duration={req.duration}"
+            ]
+
+            # 서브프로세스 실행 (백그라운드)
+            subprocess.run(cmd, capture_output=True, text=True, timeout=req.duration + 30)
+        except subprocess.TimeoutExpired:
+            # 타임아웃 시 에러 상태 저장
+            error_status = initial_status.copy()
+            error_status["status"] = "error"
+            error_status["message"] = "시간 초과"
+            error_status["remaining_seconds"] = 0
+            with open(status_file, 'w') as f:
+                json.dump(error_status, f)
+        except Exception as e:
+            error_status = initial_status.copy()
+            error_status["status"] = "error"
+            error_status["message"] = str(e)
+            error_status["remaining_seconds"] = 0
+            with open(status_file, 'w') as f:
+                json.dump(error_status, f)
+
+    background_tasks.add_task(run_bridge)
+
+    return {
+        "status": "started",
+        "session_id": session_id,
+        "message": "측정 세션이 시작되었습니다. 체중계에 올라가세요.",
+        "duration": req.duration
+    }
+
+
+@app.get("/api/scale/status/{session_id}")
+async def get_scale_status(session_id: str):
+    """체중계 측정 세션 상태 조회"""
+    status_file = SCALE_SESSION_DIR / f"{session_id}.json"
+
+    if not status_file.exists():
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
+
+    with open(status_file, 'r') as f:
+        status = json.load(f)
+
+    return status
+
+
+@app.delete("/api/scale/session/{session_id}")
+async def delete_scale_session(session_id: str):
+    """체중계 측정 세션 삭제"""
+    status_file = SCALE_SESSION_DIR / f"{session_id}.json"
+
+    if status_file.exists():
+        status_file.unlink()
+
+    return {"status": "deleted"}

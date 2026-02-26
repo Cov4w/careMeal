@@ -4,45 +4,37 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: caremeal-postgres
+    restart: always
     environment:
       POSTGRES_DB: caremeal
-      POSTGRES_USER: caremeal_user
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-devpassword}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U caremeal_user -d caremeal"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d caremeal"]
+      interval: 10s
       timeout: 5s
       retries: 5
 
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
+    image: cov4/caremeal-backend:latest
     container_name: caremeal-backend
     ports:
       - "8000:8000"
     volumes:
-      - ./caremeal.db:/app/caremeal.db # SQLite DB (for migration)
-      - ./static:/app/static # Persist Images
-      - ./.env:/app/.env # Inject Env vars
+      - ./static:/app/static
+      - ./.env:/app/.env
     environment:
       - PYTHONUNBUFFERED=1
-      - DATABASE_URL=postgresql://caremeal_user:${DB_PASSWORD:-devpassword}@postgres:5432/caremeal
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/caremeal
     depends_on:
       postgres:
         condition: service_healthy
     restart: always
 
   frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-      args:
-        VITE_API_URL: ${VITE_API_URL}
+    image: cov4/caremeal-frontend:latest
     container_name: caremeal-frontend
     ports:
       - "80:80"

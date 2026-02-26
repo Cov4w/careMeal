@@ -27,3 +27,5 @@ langchain-google-genai
 pandas
 msoffcrypto-tool
 
+# PostgreSQL
+psycopg2-binary>=2.9.0

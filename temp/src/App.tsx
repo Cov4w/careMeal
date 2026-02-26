@@ -4,6 +4,7 @@ import ChatInterface from '@/components/ChatInterface';
 import MealRecord from '@/components/MealRecord';
 import CustomDiet from '@/components/CustomDiet';
 import MyPage from '@/components/MyPage';
+import BodyFat from '@/components/BodyFat';
 import BottomNav from '@/components/BottomNav';
 import Login from '@/components/Login';
 import { DiagnosisResult } from '@/components/Diagnosis';
@@ -14,7 +15,7 @@ import RecipeDetail from './components/RecipeDetail';
 import { Recipe, API_BASE_URL } from '@/services/api';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 
-export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'mypage' | 'mypage-report' | 'recipe-detail' | 'chatbot';
+export type ViewState = 'home' | 'chat' | 'mealRecord' | 'customDiet' | 'bodyFat' | 'mypage' | 'mypage-report' | 'recipe-detail' | 'chatbot';
 
 // URL 해시와 뷰 상태 매핑
 const VIEW_TO_HASH: Record<ViewState, string> = {
@@ -22,6 +23,7 @@ const VIEW_TO_HASH: Record<ViewState, string> = {
   'chat': 'chat',
   'mealRecord': 'meal',
   'customDiet': 'diet',
+  'bodyFat': 'bodyfat',
   'mypage': 'mypage',
   'mypage-report': 'report',
   'recipe-detail': 'recipe',
@@ -33,6 +35,7 @@ const HASH_TO_VIEW: Record<string, ViewState> = {
   'chat': 'chat',
   'meal': 'mealRecord',
   'diet': 'customDiet',
+  'bodyfat': 'bodyFat',
   'mypage': 'mypage',
   'report': 'mypage-report',
   'recipe': 'recipe-detail',
@@ -357,6 +360,17 @@ const AppContent: React.FC = () => {
                 mealData={mealData}
                 onUpdateMeal={handleUpdateMeal}
                 userId={diagnosisData?.userId || 'guest'}
+              />
+            )}
+
+            {currentView === 'bodyFat' && (
+              <BodyFat
+                userId={diagnosisData?.userId || 'guest'}
+                userProfile={{
+                  height: Number(diagnosisData?.height) || 170,
+                  age: Number(diagnosisData?.age) || 30,
+                  gender: diagnosisData?.gender || '남성'
+                }}
               />
             )}
 
