@@ -64,3 +64,9 @@ dist-ssr
 
 # Hardware test folder
 _hw_test/
+
+# Scale session data (runtime)
+temp/scale_sessions/
+
+# Claude Code local settings
+.claude/settings.local.json
